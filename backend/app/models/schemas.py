@@ -182,6 +182,8 @@ class ProjectUpdate(BaseModel):
     topic_meta: TopicMeta | None = None
     status: ProjectStatus | None = None
     content_pillar: str | None = None
+    draft: str | None = None
+    humanized: str | None = None
     platforms: dict[str, Any] | None = None
     publish_records: list[PublishRecord] | None = None
 

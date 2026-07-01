@@ -6,7 +6,7 @@ from copy import deepcopy
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -25,6 +25,9 @@ from app.models.schemas import (
     TopicCreate,
     TopicMeta,
     ChatMessage,
+    WechatContent,
+    XiaohongshuContent,
+    DouyinContent,
     new_id,
 )
 from app.services.chat_orchestrator import ChatOrchestrator
@@ -81,6 +84,15 @@ def update_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     data = payload.model_dump(exclude_unset=True)
+    if "platforms" in data and data["platforms"]:
+        incoming = data.pop("platforms")
+        for key, value in incoming.items():
+            if key == "wechat":
+                project.platforms["wechat"] = WechatContent.model_validate(value)
+            elif key == "xiaohongshu":
+                project.platforms["xiaohongshu"] = XiaohongshuContent.model_validate(value)
+            elif key == "douyin":
+                project.platforms["douyin"] = DouyinContent.model_validate(value)
     for key, value in data.items():
         setattr(project, key, value)
     project.updated_at = datetime.utcnow()
@@ -160,14 +172,21 @@ async def _chat_once(
     project: ContentProject,
     payload: ChatRequest,
     db: Session,
+    deltas: list[str] | None = None,
 ) -> dict:
     orchestrator = ChatOrchestrator(get_settings())
     style_profile = style_repo.get(db)
+
+    async def on_delta(text: str) -> None:
+        if deltas is not None:
+            deltas.append(text)
+
     updated, patch, assistant = await orchestrator.handle_message(
         project,
         payload.message,
         payload.selected_platform,
         style_profile,
+        on_delta=on_delta if payload.stream else None,
     )
     saved = project_repo.save_project(db, updated)
     return {
@@ -175,6 +194,15 @@ async def _chat_once(
         "patch": patch.model_dump(mode="json"),
         "assistant_message": assistant.model_dump(mode="json"),
     }
+
+
+@router.get("/images/{filename}")
+def get_image(filename: str):
+    settings = get_settings()
+    path = settings.images_dir / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(path)
 
 
 @router.post("/projects/{project_id}/chat")
@@ -191,8 +219,25 @@ async def chat_with_project(
         return await _chat_once(project, payload, db)
 
     async def event_stream() -> AsyncIterator[str]:
-        yield f"event: delta\ndata: {json.dumps({'text': '正在处理你的指令…'}, ensure_ascii=False)}\n\n"
-        result = await _chat_once(project, payload, db)
+        deltas: list[str] = []
+        yield f"event: delta\ndata: {json.dumps({'text': '开始处理…'}, ensure_ascii=False)}\n\n"
+
+        async def run_chat() -> dict:
+            return await _chat_once(project, payload, db, deltas=deltas)
+
+        import asyncio
+
+        task = asyncio.create_task(run_chat())
+        seen = 0
+        while not task.done():
+            while seen < len(deltas):
+                yield f"event: delta\ndata: {json.dumps({'text': deltas[seen]}, ensure_ascii=False)}\n\n"
+                seen += 1
+            await asyncio.sleep(0.15)
+        while seen < len(deltas):
+            yield f"event: delta\ndata: {json.dumps({'text': deltas[seen]}, ensure_ascii=False)}\n\n"
+            seen += 1
+        result = task.result()
         yield f"event: done\ndata: {json.dumps(result, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

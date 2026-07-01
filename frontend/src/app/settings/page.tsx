@@ -66,6 +66,34 @@ export default function SettingsPage() {
             className="mt-1 min-h-28 w-full rounded-xl border border-stone-200 p-3"
           />
         </label>
+        <div className="space-y-3">
+          <span className="text-sm text-stone-600">各平台默认风格</span>
+          {(
+            [
+              ["wechat", "公众号（偏故事、段落完整）"],
+              ["xiaohongshu", "小红书（短段落、口语化）"],
+              ["douyin", "抖音（口播钩子、分镜节奏）"],
+            ] as const
+          ).map(([key, label]) => (
+            <label key={key} className="block text-sm">
+              <span className="text-stone-500">{label}</span>
+              <input
+                value={profile.platform_defaults[key] || ""}
+                onChange={(e) =>
+                  setProfile({
+                    ...profile,
+                    platform_defaults: {
+                      ...profile.platform_defaults,
+                      [key]: e.target.value,
+                    },
+                  })
+                }
+                placeholder="例如：开头用个人经历，少堆数据"
+                className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2"
+              />
+            </label>
+          ))}
+        </div>
         <button onClick={save} className="rounded-xl bg-amber-700 px-4 py-2 text-sm text-white">
           保存风格档案
         </button>
@@ -75,8 +103,8 @@ export default function SettingsPage() {
         <p className="font-medium">LLM 配置说明</p>
         <p className="mt-2">
           在后端读取根目录 <code>.env</code>，支持 <code>DEEPSEEK_API_KEY</code> 与{" "}
-          <code>OPENAI_API_KEY</code>。默认优先使用 DeepSeek，可通过 <code>LLM_PROVIDER</code>{" "}
-          切换。
+          <code>OPENAI_API_KEY</code>（文案 + DALL-E 封面生图）。默认优先使用 DeepSeek，可通过{" "}
+          <code>LLM_PROVIDER</code> 切换。
         </p>
       </div>
     </div>

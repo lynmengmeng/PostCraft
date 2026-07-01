@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     skills_dir: Path = ROOT_DIR / "skills"
     vendor_skills_dir: Path = ROOT_DIR / "vendor" / "oh-my-writing-skill" / "skills"
     docs_skills_dir: Path = ROOT_DIR / "docs" / "oh-my-writing-skill"
+    root_dir: Path = ROOT_DIR
+    images_dir: Path = ROOT_DIR / "data" / "images"
 
     @property
     def cors_origin_list(self) -> list[str]:

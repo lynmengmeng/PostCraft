@@ -24,6 +24,12 @@ export default function DraftsPage() {
     return projects;
   }, [projects, tab]);
 
+  async function deleteProject(id: string) {
+    await api.deleteProject(id);
+    setProjects((prev) => prev.filter((item) => item.id !== id));
+    if (activeId === id) setActiveId(null);
+  }
+
   async function savePublishRecord(project: ContentProject) {
     const record: PublishRecord = {
       id: crypto.randomUUID(),
@@ -83,12 +89,24 @@ export default function DraftsPage() {
                     {statusLabels[project.status]} · 更新于 {new Date(project.updated_at).toLocaleString()}
                   </p>
                 </div>
-                <button
-                  onClick={() => setActiveId(activeId === project.id ? null : project.id)}
-                  className="rounded-lg bg-amber-700 px-3 py-1.5 text-sm text-white"
-                >
-                  填写发布记录
-                </button>
+                <div className="flex shrink-0 items-start gap-2">
+                  <button
+                    onClick={() => setActiveId(activeId === project.id ? null : project.id)}
+                    className="rounded-lg bg-amber-700 px-3 py-1.5 text-sm text-white"
+                  >
+                    填写发布记录
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirm(`确定删除「${project.title}」吗？此操作不可恢复。`)) {
+                        deleteProject(project.id);
+                      }
+                    }}
+                    className="rounded-lg border border-stone-200 px-3 py-1.5 text-sm text-stone-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                  >
+                    删除
+                  </button>
+                </div>
               </div>
 
               {activeId === project.id && (
@@ -108,7 +126,13 @@ export default function DraftsPage() {
                     value={form.url}
                     onChange={(e) => setForm({ ...form, url: e.target.value })}
                     placeholder="发布链接（可选）"
-                    className="rounded-lg border border-stone-200 px-3 py-2 text-sm md:col-span-2"
+                    className="rounded-lg border border-stone-200 px-3 py-2 text-sm"
+                  />
+                  <input
+                    value={form.note}
+                    onChange={(e) => setForm({ ...form, note: e.target.value })}
+                    placeholder="备注"
+                    className="rounded-lg border border-stone-200 px-3 py-2 text-sm"
                   />
                   <button
                     onClick={() => savePublishRecord(project)}
@@ -128,6 +152,7 @@ export default function DraftsPage() {
                         {platformLabels[record.platform]} · {record.status}
                         {record.published_at ? ` · ${new Date(record.published_at).toLocaleString()}` : ""}
                         {record.url ? ` · ${record.url}` : ""}
+                        {record.note ? ` · 备注：${record.note}` : ""}
                       </li>
                     ))}
                   </ul>

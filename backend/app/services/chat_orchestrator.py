@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-import json
 from copy import deepcopy
 from datetime import datetime
+from typing import Any, Awaitable, Callable
 
 from app.config import Settings
 from app.models.schemas import (
     AuthorStyleProfile,
+    ChangeRecord,
     ChatMessage,
     ContentPatch,
     ContentProject,
     ProjectVersion,
     RiskWarningItem,
 )
+from app.services.fact_check import scan_project
+from app.services.image_generator import ImageGenerator
 from app.services.intent_parser import ParsedIntent, parse_intent
 from app.services.llm_client import LLMClient
 from app.services.mock_generator import (
@@ -20,9 +23,12 @@ from app.services.mock_generator import (
     build_mock_generate_all,
     build_mock_titles,
 )
-from app.services.fact_check import scan_project
-from app.services.repository import apply_patch, parse_json_from_text
+from app.services.pipeline import ContentPipeline
+from app.services.repository import apply_patch
 from app.services.skill_loader import SkillLoader
+from app.skill_pipelines import ALL_PLATFORMS
+
+StreamCallback = Callable[[str], Awaitable[None]] | None
 
 
 class ChatOrchestrator:
@@ -30,6 +36,8 @@ class ChatOrchestrator:
         self.settings = settings
         self.llm = LLMClient(settings)
         self.skills = SkillLoader(settings)
+        self.pipeline = ContentPipeline(self.llm, self.skills)
+        self.images = ImageGenerator(settings)
 
     async def handle_message(
         self,
@@ -37,6 +45,7 @@ class ChatOrchestrator:
         message: str,
         selected_platform: str,
         style_profile: AuthorStyleProfile,
+        on_delta: StreamCallback = None,
     ) -> tuple[ContentProject, ContentPatch, ChatMessage]:
         parsed = parse_intent(message, selected_platform)  # type: ignore[arg-type]
         project.chat_history.append(ChatMessage(role="user", content=message))
@@ -53,7 +62,7 @@ class ChatOrchestrator:
             restored.chat_history.append(assistant)
             return restored, patch, assistant
 
-        patch = await self._execute(project, message, parsed, style_profile)
+        patch = await self._execute(project, message, parsed, style_profile, on_delta)
         self._snapshot(project, patch.summary)
         updated = apply_patch(project, patch)
         updated.updated_at = datetime.utcnow()
@@ -70,21 +79,55 @@ class ChatOrchestrator:
         message: str,
         parsed: ParsedIntent,
         style_profile: AuthorStyleProfile,
+        on_delta: StreamCallback = None,
     ) -> ContentPatch:
         if parsed.intent == "generate_all":
             if self.llm.status().configured:
-                return await self._llm_generate_all(project, message, style_profile)
+                patch_data = await self.pipeline.generate_all(
+                    project, style_profile, message, on_delta=on_delta
+                )
+                patch_data = await self._attach_cover_images(patch_data)
+                return ContentPatch(
+                    intent="generate_all",
+                    target_platforms=["wechat", "xiaohongshu", "douyin"],
+                    summary="已通过 Skill 流水线生成三平台初稿。",
+                    patch=patch_data,
+                    changes=self._changes_from_patch(patch_data),
+                )
             return build_mock_generate_all(project)
 
         if parsed.intent == "generate_titles":
             if self.llm.status().configured:
-                return await self._llm_titles(project, parsed.title_count, style_profile)
+                humanized = project.humanized or project.draft or project.inspiration
+                titles = await self.pipeline._generate_titles(
+                    project, style_profile, humanized, parsed.title_count
+                )
+                return ContentPatch(
+                    intent="generate_titles",
+                    target_platforms=["all"],
+                    summary=f"已生成 {len(titles)} 个标题备选。",
+                    patch={"titles": titles},
+                )
             return build_mock_titles(project, parsed.title_count)
 
         if parsed.intent == "cover_assets":
             if self.llm.status().configured:
-                return await self._llm_cover_assets(project, style_profile)
-            return build_mock_cover_assets(project)
+                platforms = {
+                    k: v.model_dump(mode="json") for k, v in project.platforms.items()
+                }
+                assets = await self.pipeline._generate_cover_prompts(project, style_profile, platforms)
+                patch_data = {"cover_assets": assets}
+                patch_data = await self._attach_cover_images(patch_data)
+                return ContentPatch(
+                    intent="cover_assets",
+                    target_platforms=["all"],
+                    summary="已生成封面文案、配图提示词与封面图。",
+                    patch=patch_data,
+                )
+            patch = build_mock_cover_assets(project)
+            patch_data = await self._attach_cover_images(patch.patch)
+            patch.patch = patch_data
+            return patch
 
         if parsed.intent == "fact_check":
             warnings = self._build_warnings(project, style_profile)
@@ -100,16 +143,38 @@ class ChatOrchestrator:
                 patch={},
             )
 
-        if parsed.intent == "humanize":
+        if parsed.intent in {"humanize", "patch_platform"}:
             if self.llm.status().configured:
-                humanized = ParsedIntent("patch_platform", parsed.target_platforms, parsed.constraints)
-                return await self._llm_patch(project, message, humanized, style_profile)
+                targets = (
+                    ALL_PLATFORMS
+                    if parsed.intent == "humanize"
+                    else list(parsed.target_platforms)
+                )
+                patch_data = await self.pipeline.patch_platforms(
+                    project, style_profile, message, targets, on_delta=on_delta
+                )
+                return ContentPatch(
+                    intent="patch_platform",
+                    target_platforms=targets,  # type: ignore[arg-type]
+                    summary="已更新中间体并同步到目标平台。",
+                    patch=patch_data,
+                    changes=self._changes_from_patch(patch_data),
+                )
             patch = build_mock_generate_all(project)
             patch.summary = "已按更温和、真实的观察语气刷新三平台内容。"
             return patch
 
         if self.llm.status().configured:
-            return await self._llm_patch(project, message, parsed, style_profile)
+            patch_data = await self.pipeline.patch_platforms(
+                project, style_profile, message, [selected_platform], on_delta=on_delta
+            )
+            return ContentPatch(
+                intent="patch_platform",
+                target_platforms=[selected_platform],  # type: ignore[arg-type]
+                summary="已更新内容。",
+                patch=patch_data,
+                changes=self._changes_from_patch(patch_data),
+            )
 
         fallback = build_mock_generate_all(project)
         fallback.summary = (
@@ -118,115 +183,32 @@ class ChatOrchestrator:
         )
         return fallback
 
-    async def _llm_generate_all(
-        self,
-        project: ContentProject,
-        message: str,
-        style_profile: AuthorStyleProfile,
-    ) -> ContentPatch:
-        skill = self.skills.load("postcraft-orchestrator")
-        system_prompt = (
-            f"{skill}\n\n"
-            "你现在执行 generate_all。请输出 JSON，格式如下：\n"
-            '{"summary":"...", "patch": {"humanized":"...", "draft":"...", '
-            '"platforms.wechat": {"title":"","summary":"","body":""}, '
-            '"platforms.xiaohongshu": {"title":"","body":"","tags":[]}, '
-            '"platforms.douyin": {"hook":"","duration":"90s","script":[{"index":1,"duration":"3s","narration":"","visual":"","subtitle":""}]}, '
-            '"titles":[{"text":"","style":""}], '
-            '"cover_assets":[{"platform":"all","headline":"","subheadline":"","prompt":""}]}}'
-        )
-        user_prompt = self._build_user_context(project, message, style_profile)
-        raw = await self.llm.complete(system_prompt, user_prompt)
-        payload = parse_json_from_text(raw)
-        return ContentPatch(
-            intent="generate_all",
-            target_platforms=["wechat", "xiaohongshu", "douyin"],
-            summary=payload.get("summary", "已生成三平台初稿。"),
-            patch=payload.get("patch", {}),
-        )
+    async def _attach_cover_images(self, patch_data: dict[str, Any]) -> dict[str, Any]:
+        assets = patch_data.get("cover_assets") or []
+        if not assets:
+            return patch_data
 
-    async def _llm_patch(
-        self,
-        project: ContentProject,
-        message: str,
-        parsed: ParsedIntent,
-        style_profile: AuthorStyleProfile,
-    ) -> ContentPatch:
-        skill = self.skills.load("postcraft-orchestrator")
-        system_prompt = (
-            f"{skill}\n\n"
-            "你现在执行 patch_platform。只修改必要字段，输出 JSON："
-            '{"summary":"...", "patch": {"platforms.wechat.body":"..."}}'
-        )
-        user_prompt = (
-            self._build_user_context(project, message, style_profile)
-            + f"\n\n目标平台: {parsed.target_platforms}\n用户指令: {message}"
-        )
-        raw = await self.llm.complete(system_prompt, user_prompt)
-        payload = parse_json_from_text(raw)
-        return ContentPatch(
-            intent="patch_platform",
-            target_platforms=parsed.target_platforms,  # type: ignore[arg-type]
-            summary=payload.get("summary", "已更新内容。"),
-            patch=payload.get("patch", {}),
-        )
+        updated_assets = []
+        image_url = ""
+        for asset in assets:
+            prompt = asset.get("prompt", "纪实风格封面")
+            image_url = await self.images.generate(prompt)
+            asset = {**asset, "image_url": image_url}
+            updated_assets.append(asset)
 
-    async def _llm_titles(
-        self,
-        project: ContentProject,
-        count: int,
-        style_profile: AuthorStyleProfile,
-    ) -> ContentPatch:
-        system_prompt = "你是中文标题策划，输出 JSON：{\"summary\":\"...\",\"patch\":{\"titles\":[{\"text\":\"\",\"style\":\"\"}]}}"
-        user_prompt = (
-            self._build_user_context(project, f"生成{count}个标题", style_profile)
-            + f"\n请生成 {count} 个标题，避免营销词：{style_profile.banned_phrases}"
-        )
-        raw = await self.llm.complete(system_prompt, user_prompt)
-        payload = parse_json_from_text(raw)
-        return ContentPatch(
-            intent="generate_titles",
-            target_platforms=["all"],
-            summary=payload.get("summary", f"已生成 {count} 个标题。"),
-            patch=payload.get("patch", {}),
-        )
+        patch_data["cover_assets"] = updated_assets
+        if image_url:
+            if "platforms.xiaohongshu" in patch_data and isinstance(patch_data["platforms.xiaohongshu"], dict):
+                patch_data["platforms.xiaohongshu"]["cover_image"] = image_url
+            else:
+                patch_data["platforms.xiaohongshu.cover_image"] = image_url
+        return patch_data
 
-    async def _llm_cover_assets(
-        self,
-        project: ContentProject,
-        style_profile: AuthorStyleProfile,
-    ) -> ContentPatch:
-        system_prompt = (
-            "你是封面策划，输出 JSON："
-            '{"summary":"...","patch":{"cover_assets":[{"platform":"all","headline":"","subheadline":"","prompt":""}]}}'
-        )
-        user_prompt = self._build_user_context(project, "生成封面文案和配图提示词", style_profile)
-        raw = await self.llm.complete(system_prompt, user_prompt)
-        payload = parse_json_from_text(raw)
-        return ContentPatch(
-            intent="cover_assets",
-            target_platforms=["all"],
-            summary=payload.get("summary", "已生成封面素材。"),
-            patch=payload.get("patch", {}),
-        )
-
-    def _build_user_context(
-        self,
-        project: ContentProject,
-        message: str,
-        style_profile: AuthorStyleProfile,
-    ) -> str:
-        context = {
-            "inspiration": project.inspiration,
-            "topic_meta": project.topic_meta.model_dump(mode="json"),
-            "platforms": {
-                key: value.model_dump(mode="json")
-                for key, value in project.platforms.items()
-            },
-            "style_profile": style_profile.model_dump(mode="json"),
-            "message": message,
-        }
-        return json.dumps(context, ensure_ascii=False, indent=2)
+    def _changes_from_patch(self, patch_data: dict[str, Any]) -> list[ChangeRecord]:
+        return [
+            ChangeRecord(path=key, action="replace", after_preview=str(value)[:120])
+            for key, value in patch_data.items()
+        ]
 
     def _build_warnings(
         self,

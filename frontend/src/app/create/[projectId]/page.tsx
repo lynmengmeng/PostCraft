@@ -2,17 +2,21 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api, platformLabels } from "@/lib/api";
-import type { ContentProject, Platform } from "@/lib/types";
+import { ContentEditor } from "@/components/studio/ContentEditor";
 import {
   PreviewPanel,
   getPlatformCopyText,
 } from "@/components/preview/PlatformPreview";
+import { api, platformLabels } from "@/lib/api";
+import { exportAllPlatforms, resolveImageUrl } from "@/lib/export";
+import type { ContentProject, Platform } from "@/lib/types";
 
 const quickCommands = [
   "基于这个选题，生成三个平台初稿",
   "给我 10 个标题",
   "更温和一点",
+  "去掉说教感",
+  "加个人经历，少堆数据",
   "检查敏感表述",
   "生成封面提示词",
   "撤销上一版",
@@ -27,7 +31,7 @@ export default function CreateStudioPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  const [streamingText, setStreamingText] = useState("");
+  const [streamingLines, setStreamingLines] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -42,7 +46,7 @@ export default function CreateStudioPage() {
           !loaded.platforms.wechat.body
         ) {
           autoStarted.current = true;
-          await sendChat("基于这个选题，生成三个平台初稿", loaded, false);
+          await sendChat("基于这个选题，生成三个平台初稿", loaded);
         }
       })
       .catch((err: Error) => setError(err.message))
@@ -50,28 +54,30 @@ export default function CreateStudioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.projectId]);
 
-  async function sendChat(
-    text: string,
-    current = project,
-    useStream = true,
-  ) {
+  async function sendChat(text: string, current = project) {
     if (!current || !text.trim() || sending) return;
     setSending(true);
     setError("");
-    setStreamingText(useStream ? "正在思考与生成…" : "");
+    setStreamingLines([]);
     try {
-      const result = useStream
-        ? await api.chat(current.id, text, platform, true)
-        : await api.chat(current.id, text, platform, false);
+      const result = await api.chat(current.id, text, platform, true, (delta) => {
+        setStreamingLines((prev) => [...prev, delta]);
+      });
       setProject(result.project);
       setMessage("");
-      setStreamingText("");
+      setStreamingLines([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "发送失败");
-      setStreamingText("");
+      setStreamingLines([]);
     } finally {
       setSending(false);
     }
+  }
+
+  async function runFactCheck() {
+    if (!project) return;
+    const result = await api.factCheck(project.id);
+    setProject({ ...project, risk_warnings: result.warnings });
   }
 
   async function applyTitle(index: number) {
@@ -141,6 +147,12 @@ export default function CreateStudioPage() {
             标记待发布
           </button>
           <button
+            onClick={() => exportAllPlatforms(project)}
+            className="rounded-lg border border-stone-200 px-3 py-1.5 text-sm"
+          >
+            导出全部
+          </button>
+          <button
             onClick={copyCurrentPlatform}
             className="rounded-lg bg-stone-900 px-3 py-1.5 text-sm text-white"
           >
@@ -165,9 +177,11 @@ export default function CreateStudioPage() {
                 {item.content}
               </div>
             ))}
-            {streamingText && (
-              <div className="mr-8 rounded-2xl bg-stone-100 px-3 py-2 text-sm text-stone-500">
-                {streamingText}
+            {streamingLines.length > 0 && (
+              <div className="mr-8 rounded-2xl bg-stone-100 px-3 py-2 text-sm text-stone-600">
+                {streamingLines.map((line, i) => (
+                  <div key={`${line}-${i}`}>{line}</div>
+                ))}
               </div>
             )}
           </div>
@@ -207,9 +221,16 @@ export default function CreateStudioPage() {
         <section className="col-span-4 overflow-y-auto border-r border-stone-200 bg-stone-50 p-4">
           <div className="mb-3 text-sm font-medium">内容区</div>
           <div className="space-y-4">
+            <ContentEditor project={project} platform={platform} onUpdate={setProject} />
+
             {(project.risk_warnings || []).length > 0 && (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-                <h3 className="text-sm font-medium text-amber-800">表述风险提示</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-amber-800">表述风险提示</h3>
+                  <button onClick={runFactCheck} className="text-xs text-amber-700 underline">
+                    重新扫描
+                  </button>
+                </div>
                 <div className="mt-3 space-y-2">
                   {(project.risk_warnings || []).map((warning) => (
                     <div key={`${warning.phrase}-${warning.suggestion}`} className="text-sm">
@@ -222,7 +243,12 @@ export default function CreateStudioPage() {
             )}
 
             <div className="rounded-2xl bg-white p-4 shadow-sm">
-              <h3 className="text-sm font-medium text-stone-500">标题备选</h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-stone-500">标题备选</h3>
+                <button onClick={runFactCheck} className="text-xs text-stone-500 underline">
+                  检查敏感表述
+                </button>
+              </div>
               <div className="mt-3 space-y-2">
                 {project.titles.map((title, index) => (
                   <button
@@ -243,6 +269,13 @@ export default function CreateStudioPage() {
               <h3 className="text-sm font-medium text-stone-500">封面与配图</h3>
               {project.cover_assets.map((asset) => (
                 <div key={asset.id} className="mt-3 rounded-lg bg-stone-50 p-3 text-sm">
+                  {asset.image_url && (
+                    <img
+                      src={resolveImageUrl(asset.image_url)}
+                      alt={asset.headline}
+                      className="mb-2 aspect-[3/4] w-full rounded-lg object-cover"
+                    />
+                  )}
                   <div className="font-medium">{asset.headline}</div>
                   <div className="text-stone-500">{asset.subheadline}</div>
                   <div className="mt-2 text-xs text-stone-400">{asset.prompt}</div>

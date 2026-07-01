@@ -91,7 +91,14 @@ def build_mock_generate_all(project: ContentProject) -> ContentPatch:
         TitleCandidate(text=xhs_title, style="情绪共鸣型"),
         TitleCandidate(text=f"为什么{inspiration[:10]}值得被看见？", style="问题型"),
         TitleCandidate(text=f"回村后才懂：{inspiration[:12]}", style="故事型"),
-        TitleCandidate(text=f"普通家庭最容易忽略的一个风险", style="警醒型"),
+        TitleCandidate(text="普通家庭最容易忽略的一个风险", style="警醒型"),
+        TitleCandidate(text=f"关于{inspiration[:8]}，我想认真说几句", style="情绪共鸣型"),
+        TitleCandidate(text=f"回农村后，我注意到的一个细节", style="故事型"),
+        TitleCandidate(text=f"{inspiration[:10]}背后，藏着什么？", style="问题型"),
+        TitleCandidate(text="不是危言耸听，是真实观察", style="深度型"),
+        TitleCandidate(text="为什么这件事值得被看见？", style="问题型"),
+        TitleCandidate(text=f"从{inspiration[:6]}说起", style="故事型"),
+        TitleCandidate(text="温和提醒：别忽视这些日常风险", style="警醒型"),
     ]
 
     return ContentPatch(

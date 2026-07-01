@@ -70,7 +70,13 @@ export const api = {
 
   factCheck: (id: string) => request<{ warnings: RiskWarning[] }>(`/projects/${id}/fact-check`),
 
-  chat: async (id: string, message: string, selectedPlatform: Platform, stream = false) => {
+  chat: async (
+    id: string,
+    message: string,
+    selectedPlatform: Platform,
+    stream = false,
+    onDelta?: (text: string) => void,
+  ) => {
     if (!stream) {
       return request<ChatResult>(`/projects/${id}/chat`, {
         method: "POST",
@@ -99,10 +105,17 @@ export const api = {
       const chunks = buffer.split("\n\n");
       buffer = chunks.pop() || "";
       for (const chunk of chunks) {
-        if (!chunk.startsWith("event: done")) continue;
-        const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
-        if (!dataLine) continue;
-        return JSON.parse(dataLine.slice(6)) as ChatResult;
+        if (chunk.startsWith("event: delta")) {
+          const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
+          if (dataLine) {
+            const payload = JSON.parse(dataLine.slice(6)) as { text: string };
+            onDelta?.(payload.text);
+          }
+        }
+        if (chunk.startsWith("event: done")) {
+          const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
+          if (dataLine) return JSON.parse(dataLine.slice(6)) as ChatResult;
+        }
       }
     }
 

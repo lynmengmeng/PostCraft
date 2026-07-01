@@ -9,6 +9,7 @@ export default function InspirationsPage() {
   const router = useRouter();
   const [items, setItems] = useState<Inspiration[]>([]);
   const [content, setContent] = useState("");
+  const [tagsInput, setTagsInput] = useState("");
   const [loading, setLoading] = useState(true);
 
   async function load() {
@@ -22,14 +23,25 @@ export default function InspirationsPage() {
 
   async function createItem() {
     if (!content.trim()) return;
-    await api.createInspiration(content.trim());
+    const tags = tagsInput
+      .split(/[,，]/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    await api.createInspiration(content.trim(), tags);
     setContent("");
+    setTagsInput("");
     await load();
   }
 
   async function convertToTopic(id: string) {
     const result = await api.inspirationToTopic(id);
     router.push(`/create/${result.project.id}`);
+  }
+
+  async function remove(id: string) {
+    if (!confirm("确定删除这条灵感吗？")) return;
+    await api.deleteInspiration(id);
+    await load();
   }
 
   return (
@@ -45,6 +57,12 @@ export default function InspirationsPage() {
           placeholder="记录灵感..."
           className="min-h-28 w-full rounded-xl border border-stone-200 p-3 outline-none focus:border-amber-400"
         />
+        <input
+          value={tagsInput}
+          onChange={(e) => setTagsInput(e.target.value)}
+          placeholder="标签（逗号分隔，如：社会观察, 农村生活）"
+          className="mt-3 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm"
+        />
         <button
           onClick={createItem}
           className="mt-3 rounded-xl bg-amber-700 px-4 py-2 text-sm text-white"
@@ -59,14 +77,31 @@ export default function InspirationsPage() {
           {items.map((item) => (
             <div key={item.id} className="rounded-2xl border border-stone-200 bg-white p-4">
               <p className="whitespace-pre-wrap">{item.content}</p>
+              {item.tags.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {item.tags.map((tag) => (
+                    <span key={tag} className="rounded-full bg-stone-100 px-2 py-1 text-xs text-stone-600">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="mt-3 flex items-center justify-between">
                 <p className="text-xs text-stone-400">{new Date(item.created_at).toLocaleString()}</p>
-                <button
-                  onClick={() => convertToTopic(item.id)}
-                  className="rounded-lg bg-stone-900 px-3 py-1.5 text-sm text-white"
-                >
-                  一键转选题
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => convertToTopic(item.id)}
+                    className="rounded-lg bg-stone-900 px-3 py-1.5 text-sm text-white"
+                  >
+                    一键转选题
+                  </button>
+                  <button
+                    onClick={() => remove(item.id)}
+                    className="rounded-lg border border-stone-200 px-3 py-1.5 text-sm text-stone-500 hover:text-red-600"
+                  >
+                    删除
+                  </button>
+                </div>
               </div>
             </div>
           ))}

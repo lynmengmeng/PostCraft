@@ -1,5 +1,6 @@
 param(
-    [int]$Port = 8082
+    [int]$Port = 8082,
+    [string[]]$AllowedProcessNames = @("python")
 )
 
 $lines = netstat -ano | Select-String ":$Port\s"
@@ -17,11 +18,11 @@ $processIds = $processIds | Sort-Object -Unique
 foreach ($processId in $processIds) {
     $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
     if ($null -eq $proc) { continue }
-    if ($proc.ProcessName -ne "python") {
-        Write-Host "Port $Port is used by $($proc.ProcessName) (PID $processId). Stop it manually or change API_PORT."
+    if ($AllowedProcessNames -notcontains $proc.ProcessName) {
+        Write-Host "Port $Port is used by $($proc.ProcessName) (PID $processId). Stop it manually or change the port."
         exit 1
     }
-    Write-Host "Stopping stale backend on port $Port (PID $processId)..."
+    Write-Host "Stopping stale $($proc.ProcessName) on port $Port (PID $processId)..."
     Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
 }
 

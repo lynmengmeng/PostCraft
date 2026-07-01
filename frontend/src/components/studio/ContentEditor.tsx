@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import { resolveImageUrl } from "@/lib/export";
 import type { ContentProject, Platform } from "@/lib/types";
 
 interface ContentEditorProps {
@@ -12,6 +13,8 @@ interface ContentEditorProps {
 
 export function ContentEditor({ project, platform, onUpdate }: ContentEditorProps) {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -74,6 +77,17 @@ export function ContentEditor({ project, platform, onUpdate }: ContentEditorProp
     scheduleSave(next);
   }
 
+  async function handleCoverUpload(file: File) {
+    setUploading(true);
+    try {
+      const saved = await api.uploadCover(project.id, file);
+      onUpdate(saved);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
   return (
     <div className="rounded-2xl bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
@@ -108,6 +122,36 @@ export function ContentEditor({ project, platform, onUpdate }: ContentEditorProp
 
       {platform === "xiaohongshu" && (
         <div className="space-y-3">
+          <div className="rounded-lg border border-dashed border-stone-200 bg-stone-50/80 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-stone-500">封面图（建议 3:4）</span>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="rounded-lg bg-stone-900 px-3 py-1 text-xs text-white disabled:opacity-50"
+              >
+                {uploading ? "上传中…" : "上传封面"}
+              </button>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void handleCoverUpload(file);
+              }}
+            />
+            {project.platforms.xiaohongshu.cover_image && (
+              <img
+                src={resolveImageUrl(project.platforms.xiaohongshu.cover_image)}
+                alt="当前封面"
+                className="mt-2 aspect-[3/4] w-full max-w-[200px] rounded-lg object-cover"
+              />
+            )}
+          </div>
           <input
             value={project.platforms.xiaohongshu.title}
             onChange={(e) => updateXhs("title", e.target.value)}

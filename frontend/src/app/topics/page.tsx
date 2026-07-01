@@ -1,62 +1,70 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { LoadError } from "@/components/ui/LoadError";
+import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { api } from "@/lib/api";
-import type { Topic } from "@/lib/types";
 
 const pillars = ["农村老人与家庭健康", "消费陷阱与三无产品", "农村环境与普通人风险"];
 
 export default function TopicsPage() {
   const router = useRouter();
-  const [items, setItems] = useState<Topic[]>([]);
+  const { data: items, error, loading, reload } = useBackendQuery(() => api.listTopics(), []);
   const [title, setTitle] = useState("");
   const [pillar, setPillar] = useState(pillars[0]);
   const [tone, setTone] = useState("温和共情");
   const [filterPillar, setFilterPillar] = useState("全部");
-  const [loading, setLoading] = useState(true);
-
-  async function load() {
-    setItems(await api.listTopics());
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    load();
-  }, []);
+  const [actionError, setActionError] = useState("");
 
   const filtered = useMemo(() => {
-    if (filterPillar === "全部") return items;
-    return items.filter((item) => item.content_pillar === filterPillar);
+    const list = items ?? [];
+    if (filterPillar === "全部") return list;
+    return list.filter((item) => item.content_pillar === filterPillar);
   }, [items, filterPillar]);
 
   async function createTopic() {
     if (!title.trim()) return;
-    await api.createTopic({
-      title: title.trim(),
-      content_pillar: pillar,
-      direction: "社会观察",
-      tone,
-      platforms: ["wechat", "xiaohongshu", "douyin"],
-      audience: "普通家庭",
-      material_status: "idea",
-      priority: "soon",
-      series: "",
-      inspiration: title.trim(),
-    });
-    setTitle("");
-    await load();
+    setActionError("");
+    try {
+      await api.createTopic({
+        title: title.trim(),
+        content_pillar: pillar,
+        direction: "社会观察",
+        tone,
+        platforms: ["wechat", "xiaohongshu", "douyin"],
+        audience: "普通家庭",
+        material_status: "idea",
+        priority: "soon",
+        series: "",
+        inspiration: title.trim(),
+      });
+      setTitle("");
+      await reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "保存失败");
+    }
   }
 
   async function enterStudio(topicId: string) {
-    const project = await api.topicToProject(topicId);
-    router.push(`/create/${project.id}`);
+    setActionError("");
+    try {
+      const project = await api.topicToProject(topicId);
+      router.push(`/create/${project.id}`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "进入创作室失败");
+    }
   }
 
   async function remove(id: string) {
     if (!confirm("确定删除这个选题吗？")) return;
-    await api.deleteTopic(id);
-    await load();
+    setActionError("");
+    try {
+      await api.deleteTopic(id);
+      await reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "删除失败");
+    }
   }
 
   return (
@@ -102,6 +110,12 @@ export default function TopicsPage() {
         </button>
       </div>
 
+      {actionError && (
+        <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {actionError}
+        </p>
+      )}
+
       <div className="flex flex-wrap gap-2">
         {["全部", ...pillars].map((item) => (
           <button
@@ -116,7 +130,9 @@ export default function TopicsPage() {
         ))}
       </div>
 
-      {loading ? (
+      {error ? (
+        <LoadError message={error} onRetry={() => void reload()} />
+      ) : loading ? (
         <p className="text-sm text-stone-400">加载中...</p>
       ) : (
         <div className="grid gap-4">

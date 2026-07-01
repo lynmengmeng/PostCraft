@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from copy import deepcopy
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,7 @@ from app.models.schemas import (
     TopicCreate,
     TopicMeta,
     ChatMessage,
+    RiskWarningItem,
     WechatContent,
     XiaohongshuContent,
     DouyinContent,
@@ -32,10 +33,18 @@ from app.models.schemas import (
 )
 from app.services.chat_orchestrator import ChatOrchestrator
 from app.services.fact_check import scan_project
+from app.services.image_generator import ImageGenerator
 from app.services.llm_client import LLMClient
 from app.services.repository import inspiration_repo, project_repo, style_repo, topic_repo
 
 router = APIRouter()
+
+
+def _scan_and_attach_warnings(project: ContentProject, db: Session) -> ContentProject:
+    style = style_repo.get(db)
+    raw = scan_project(project, style.banned_phrases)
+    project.risk_warnings = [RiskWarningItem.model_validate(item) for item in raw]
+    return project
 
 
 @router.get("/health")
@@ -96,6 +105,9 @@ def update_project(
     for key, value in data.items():
         setattr(project, key, value)
     project.updated_at = datetime.utcnow()
+    content_fields = {"platforms", "draft", "humanized"}
+    if content_fields.intersection(data.keys()):
+        project = _scan_and_attach_warnings(project, db)
     return project_repo.save_project(db, project)
 
 
@@ -130,6 +142,7 @@ def apply_title(
         item.applied = index == payload.title_index
 
     project.updated_at = datetime.utcnow()
+    project = _scan_and_attach_warnings(project, db)
     return project_repo.save_project(db, project)
 
 
@@ -203,6 +216,31 @@ def get_image(filename: str):
     if not path.exists():
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(path)
+
+
+@router.post("/projects/{project_id}/upload-cover", response_model=ContentProject)
+async def upload_cover(
+    project_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> ContentProject:
+    project = project_repo.get_project(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    content = await file.read()
+    content_type = file.content_type or "image/jpeg"
+    try:
+        image_url = ImageGenerator(get_settings()).save_upload(content, content_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    project.platforms["xiaohongshu"].cover_image = image_url
+    if project.cover_assets:
+        project.cover_assets[0].image_url = image_url
+    project.updated_at = datetime.utcnow()
+    project = _scan_and_attach_warnings(project, db)
+    return project_repo.save_project(db, project)
 
 
 @router.post("/projects/{project_id}/chat")

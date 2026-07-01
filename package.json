@@ -2,10 +2,12 @@
   "name": "postcraft",
   "private": true,
   "scripts": {
-    "predev": "powershell -ExecutionPolicy Bypass -File scripts/free-port.ps1 -Port 8082",
-    "dev": "concurrently -n backend,frontend -c blue,green \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "dev:backend": "cd backend && .venv\\Scripts\\python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8082",
-    "dev:frontend": "cd frontend && npm run dev -- -p 3002"
+    "predev:backend": "powershell -ExecutionPolicy Bypass -File scripts/free-port.ps1 -Port 8082 -AllowedProcessNames python",
+    "predev:frontend": "powershell -ExecutionPolicy Bypass -File scripts/free-port.ps1 -Port 3002 -AllowedProcessNames node",
+    "dev:backend": "cd backend && .venv\\Scripts\\python -m uvicorn app.main:app --reload --reload-dir app --reload-delay 3 --host 127.0.0.1 --port 8082",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev": "concurrently --handle-input false --restart-tries 5 --restart-after 3000 -n backend,frontend -c blue,green \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "predev": "powershell -ExecutionPolicy Bypass -File scripts/free-dev-ports.ps1"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

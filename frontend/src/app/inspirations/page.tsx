@@ -1,47 +1,57 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { LoadError } from "@/components/ui/LoadError";
+import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { api } from "@/lib/api";
-import type { Inspiration } from "@/lib/types";
 
 export default function InspirationsPage() {
   const router = useRouter();
-  const [items, setItems] = useState<Inspiration[]>([]);
+  const { data: items, error, loading, reload } = useBackendQuery(
+    () => api.listInspirations(),
+    [],
+  );
   const [content, setContent] = useState("");
   const [tagsInput, setTagsInput] = useState("");
-  const [loading, setLoading] = useState(true);
-
-  async function load() {
-    setItems(await api.listInspirations());
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    load();
-  }, []);
+  const [actionError, setActionError] = useState("");
 
   async function createItem() {
     if (!content.trim()) return;
+    setActionError("");
     const tags = tagsInput
       .split(/[,，]/)
       .map((t) => t.trim())
       .filter(Boolean);
-    await api.createInspiration(content.trim(), tags);
-    setContent("");
-    setTagsInput("");
-    await load();
+    try {
+      await api.createInspiration(content.trim(), tags);
+      setContent("");
+      setTagsInput("");
+      await reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "保存失败");
+    }
   }
 
   async function convertToTopic(id: string) {
-    const result = await api.inspirationToTopic(id);
-    router.push(`/create/${result.project.id}`);
+    setActionError("");
+    try {
+      const result = await api.inspirationToTopic(id);
+      router.push(`/create/${result.project.id}`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "转换失败");
+    }
   }
 
   async function remove(id: string) {
     if (!confirm("确定删除这条灵感吗？")) return;
-    await api.deleteInspiration(id);
-    await load();
+    setActionError("");
+    try {
+      await api.deleteInspiration(id);
+      await reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "删除失败");
+    }
   }
 
   return (
@@ -70,11 +80,18 @@ export default function InspirationsPage() {
           保存灵感
         </button>
       </div>
-      {loading ? (
+      {actionError && (
+        <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {actionError}
+        </p>
+      )}
+      {error ? (
+        <LoadError message={error} onRetry={() => void reload()} />
+      ) : loading ? (
         <p className="text-sm text-stone-400">加载中...</p>
       ) : (
         <div className="grid gap-4">
-          {items.map((item) => (
+          {(items ?? []).map((item) => (
             <div key={item.id} className="rounded-2xl border border-stone-200 bg-white p-4">
               <p className="whitespace-pre-wrap">{item.content}</p>
               {item.tags.length > 0 && (

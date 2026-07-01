@@ -7,22 +7,31 @@ import type {
   RiskWarning,
   Topic,
 } from "./types";
+import { ApiError, formatApiError, isNetworkFetchError } from "./api-error";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8082/api";
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8082/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-    cache: "no-store",
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers || {}),
+      },
+      cache: "no-store",
+    });
+  } catch (error) {
+    throw new ApiError(formatApiError(error, API_BASE), {
+      cause: error,
+      isNetworkError: isNetworkFetchError(error),
+    });
+  }
 
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(detail || `Request failed: ${response.status}`);
+    throw new ApiError(detail || `请求失败 (${response.status})`);
   }
 
   return response.json() as Promise<T>;
@@ -84,11 +93,19 @@ export const api = {
       });
     }
 
-    const response = await fetch(`${API_BASE}/projects/${id}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, selected_platform: selectedPlatform, stream: true }),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/projects/${id}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, selected_platform: selectedPlatform, stream: true }),
+      });
+    } catch (error) {
+      throw new ApiError(formatApiError(error, API_BASE), {
+        cause: error,
+        isNetworkError: isNetworkFetchError(error),
+      });
+    }
 
     if (!response.ok || !response.body) {
       throw new Error("流式请求失败");
@@ -152,6 +169,28 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(profile),
     }),
+
+  uploadCover: async (projectId: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/projects/${projectId}/upload-cover`, {
+        method: "POST",
+        body: form,
+      });
+    } catch (error) {
+      throw new ApiError(formatApiError(error, API_BASE), {
+        cause: error,
+        isNetworkError: isNetworkFetchError(error),
+      });
+    }
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Upload failed: ${response.status}`);
+    }
+    return response.json() as Promise<ContentProject>;
+  },
 };
 
 export const platformLabels: Record<Platform, string> = {

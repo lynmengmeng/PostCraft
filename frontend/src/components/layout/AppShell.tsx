@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { BackendStatusBanner } from "@/components/layout/BackendStatusBanner";
 
 const navItems = [
   { href: "/", label: "工作台" },
@@ -17,6 +18,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-stone-50 text-stone-900">
+      {!hideNav && <BackendStatusBanner />}
       {!hideNav && (
         <header className="border-b border-stone-200 bg-white/90 backdrop-blur">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">

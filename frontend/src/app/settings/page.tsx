@@ -1,28 +1,46 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LoadError } from "@/components/ui/LoadError";
+import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { api } from "@/lib/api";
 import type { AuthorStyleProfile } from "@/lib/types";
 
 export default function SettingsPage() {
-  const [profile, setProfile] = useState<AuthorStyleProfile | null>(null);
+  const { data: profile, error, loading, reload, setData: setProfile } = useBackendQuery(() =>
+    api.getStyleProfile(),
+  );
   const [saved, setSaved] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api.getStyleProfile().then(setProfile).finally(() => setLoading(false));
-  }, []);
+  const [saveError, setSaveError] = useState("");
 
   async function save() {
     if (!profile) return;
-    const updated = await api.updateStyleProfile(profile);
-    setProfile(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setSaveError("");
+    try {
+      const updated = await api.updateStyleProfile(profile);
+      setProfile(updated);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "保存失败");
+    }
   }
 
-  if (loading || !profile) {
+  if (loading) {
     return <p className="text-sm text-stone-400">加载设置...</p>;
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-2xl font-semibold">设置</h1>
+        <LoadError message={error} onRetry={() => void reload()} />
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return null;
   }
 
   return (
@@ -98,6 +116,7 @@ export default function SettingsPage() {
           保存风格档案
         </button>
         {saved && <span className="ml-3 text-sm text-green-600">已保存</span>}
+        {saveError && <p className="text-sm text-red-600">{saveError}</p>}
       </div>
       <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-5 text-sm text-stone-600">
         <p className="font-medium">LLM 配置说明</p>

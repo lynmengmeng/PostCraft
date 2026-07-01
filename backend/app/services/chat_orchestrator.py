@@ -14,6 +14,13 @@ from app.models.schemas import (
     ProjectVersion,
     RiskWarningItem,
 )
+from app.services.chat_context import (
+    RECENT_MESSAGE_LIMIT,
+    build_chat_context_block,
+    messages_to_summarize,
+    should_refresh_summary,
+    summarize_chat,
+)
 from app.services.fact_check import scan_project
 from app.services.image_generator import ImageGenerator
 from app.services.intent_parser import ParsedIntent, parse_intent
@@ -66,6 +73,7 @@ class ChatOrchestrator:
         self._snapshot(project, patch.summary)
         updated = apply_patch(project, patch)
         updated.updated_at = datetime.utcnow()
+        await self._maybe_refresh_chat_summary(updated)
         updated.risk_warnings = self._build_warnings(updated, style_profile)
         if updated.risk_warnings and patch.intent != "fact_check":
             patch.summary += f" 检测到 {len(updated.risk_warnings)} 处表述风险，请在内容区查看。"
@@ -209,6 +217,15 @@ class ChatOrchestrator:
             ChangeRecord(path=key, action="replace", after_preview=str(value)[:120])
             for key, value in patch_data.items()
         ]
+
+    async def _maybe_refresh_chat_summary(self, project: ContentProject) -> None:
+        if not should_refresh_summary(project):
+            return
+        older = messages_to_summarize(project)
+        if not older:
+            return
+        project.chat_summary = await summarize_chat(self.llm, older)
+        project.chat_summary_through = len(project.chat_history) - RECENT_MESSAGE_LIMIT
 
     def _build_warnings(
         self,

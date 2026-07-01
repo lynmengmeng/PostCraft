@@ -11,6 +11,8 @@ import { api, platformLabels } from "@/lib/api";
 import { exportAllPlatforms, resolveImageUrl } from "@/lib/export";
 import type { ContentProject, Platform } from "@/lib/types";
 
+type StudioViewMode = "split" | "preview" | "edit";
+
 const quickCommands = [
   "基于这个选题，生成三个平台初稿",
   "给我 10 个标题",
@@ -34,6 +36,13 @@ export default function CreateStudioPage() {
   const [streamingLines, setStreamingLines] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [viewMode, setViewMode] = useState<StudioViewMode>("split");
+
+  const chatCol = "col-span-3";
+  const contentCol =
+    viewMode === "preview" ? "hidden" : viewMode === "edit" ? "col-span-9" : "col-span-4";
+  const previewCol =
+    viewMode === "edit" ? "hidden" : viewMode === "preview" ? "col-span-9" : "col-span-5";
 
   useEffect(() => {
     api
@@ -129,6 +138,25 @@ export default function CreateStudioPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-lg border border-stone-200 p-0.5">
+            {(
+              [
+                ["split", "三栏"],
+                ["edit", "编辑"],
+                ["preview", "预览"],
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                className={`rounded-md px-2.5 py-1 text-xs ${
+                  viewMode === mode ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-50"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           {(Object.keys(platformLabels) as Platform[]).map((item) => (
             <button
               key={item}
@@ -162,8 +190,15 @@ export default function CreateStudioPage() {
       </header>
 
       <div className="grid flex-1 grid-cols-12 gap-0 overflow-hidden">
-        <section className="col-span-3 flex flex-col border-r border-stone-200 bg-white">
-          <div className="border-b border-stone-100 px-4 py-3 text-sm font-medium">对话区</div>
+        <section className={`${chatCol} flex flex-col border-r border-stone-200 bg-white`}>
+          <div className="border-b border-stone-100 px-4 py-3 text-sm font-medium">
+            对话区
+            {project.chat_summary && (
+              <p className="mt-1 text-xs font-normal text-stone-400 line-clamp-2" title={project.chat_summary}>
+                摘要已压缩较早对话
+              </p>
+            )}
+          </div>
           <div className="flex-1 space-y-3 overflow-y-auto p-4">
             {project.chat_history.map((item) => (
               <div
@@ -218,12 +253,17 @@ export default function CreateStudioPage() {
           </div>
         </section>
 
-        <section className="col-span-4 overflow-y-auto border-r border-stone-200 bg-stone-50 p-4">
-          <div className="mb-3 text-sm font-medium">内容区</div>
+        <section className={`${contentCol} overflow-y-auto border-r border-stone-200 bg-stone-50 p-4`}>
+          <div className="mb-3 flex items-center justify-between text-sm">
+            <span className="font-medium">内容区</span>
+            {viewMode === "edit" && (
+              <span className="text-xs text-stone-400">编辑模式 · 修改后自动保存并扫描风险</span>
+            )}
+          </div>
           <div className="space-y-4">
             <ContentEditor project={project} platform={platform} onUpdate={setProject} />
 
-            {(project.risk_warnings || []).length > 0 && (
+            {(project.risk_warnings || []).length > 0 ? (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-medium text-amber-800">表述风险提示</h3>
@@ -240,6 +280,8 @@ export default function CreateStudioPage() {
                   ))}
                 </div>
               </div>
+            ) : (
+              <p className="text-xs text-stone-400">编辑或 AI 修改后会自动扫描表述风险</p>
             )}
 
             <div className="rounded-2xl bg-white p-4 shadow-sm">
@@ -281,6 +323,11 @@ export default function CreateStudioPage() {
                   <div className="mt-2 text-xs text-stone-400">{asset.prompt}</div>
                 </div>
               ))}
+              {project.platforms.xiaohongshu.cover_image && (
+                <p className="mt-2 text-xs text-stone-400">
+                  当前小红书封面已设置，可在编辑区上传替换
+                </p>
+              )}
             </div>
 
             {(project.versions || []).length > 0 && (
@@ -305,7 +352,7 @@ export default function CreateStudioPage() {
           </div>
         </section>
 
-        <section className="col-span-5 overflow-y-auto p-4">
+        <section className={`${previewCol} overflow-y-auto p-4`}>
           <div className="mb-3 flex items-center justify-between text-sm">
             <span className="font-medium">预览区 · {platformLabels[platform]}</span>
             <span className="text-xs text-stone-400">近似预览，复制后可在平台微调</span>

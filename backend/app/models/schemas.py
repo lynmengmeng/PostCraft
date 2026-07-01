@@ -126,6 +126,8 @@ class ContentProject(BaseModel):
     titles: list[TitleCandidate] = Field(default_factory=list)
     cover_assets: list[CoverAsset] = Field(default_factory=list)
     chat_history: list[ChatMessage] = Field(default_factory=list)
+    chat_summary: str = ""
+    chat_summary_through: int = 0
     versions: list[ProjectVersion] = Field(default_factory=list)
     status: ProjectStatus = "draft"
     publish_records: list[PublishRecord] = Field(default_factory=list)

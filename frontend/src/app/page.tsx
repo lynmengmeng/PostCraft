@@ -1,37 +1,45 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { LoadError } from "@/components/ui/LoadError";
 import { ProjectListItem } from "@/components/project/ProjectListItem";
+import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { api } from "@/lib/api";
-import type { ContentProject, LLMStatus } from "@/lib/types";
 
 export default function HomePage() {
   const router = useRouter();
-  const [projects, setProjects] = useState<ContentProject[]>([]);
-  const [llmStatus, setLlmStatus] = useState<LLMStatus | null>(null);
+  const {
+    data: boot,
+    error,
+    loading,
+    reload,
+    setData: setBoot,
+  } = useBackendQuery(
+    async () => {
+      const [projectList, status] = await Promise.all([api.listProjects(), api.llmStatus()]);
+      return { projects: projectList, llmStatus: status };
+    },
+    [],
+  );
+  const projects = boot?.projects ?? [];
+  const llmStatus = boot?.llmStatus ?? null;
   const [inspiration, setInspiration] = useState("");
   const [quickInspiration, setQuickInspiration] = useState("");
   const [savingInspiration, setSavingInspiration] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-
-  useEffect(() => {
-    Promise.all([api.listProjects(), api.llmStatus()])
-      .then(([projectList, status]) => {
-        setProjects(projectList);
-        setLlmStatus(status);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  const [actionError, setActionError] = useState("");
 
   async function createFromInspiration() {
     if (!inspiration.trim()) return;
     setCreating(true);
+    setActionError("");
     try {
       const project = await api.createProject({ inspiration: inspiration.trim() });
       router.push(`/create/${project.id}`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "创建失败");
     } finally {
       setCreating(false);
     }
@@ -40,9 +48,12 @@ export default function HomePage() {
   async function saveQuickInspiration() {
     if (!quickInspiration.trim()) return;
     setSavingInspiration(true);
+    setActionError("");
     try {
       await api.createInspiration(quickInspiration.trim());
       setQuickInspiration("");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "保存失败");
     } finally {
       setSavingInspiration(false);
     }
@@ -50,7 +61,9 @@ export default function HomePage() {
 
   async function deleteProject(id: string) {
     await api.deleteProject(id);
-    setProjects((prev) => prev.filter((item) => item.id !== id));
+    setBoot((prev) =>
+      prev ? { ...prev, projects: prev.projects.filter((item) => item.id !== id) } : prev,
+    );
   }
 
   const drafts = projects.filter((p) => p.status !== "published");
@@ -58,6 +71,12 @@ export default function HomePage() {
 
   return (
     <div className="space-y-8">
+      {error && <LoadError message={error} onRetry={() => void reload()} compact />}
+      {actionError && (
+        <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {actionError}
+        </p>
+      )}
       <section className="rounded-3xl bg-gradient-to-br from-amber-50 to-orange-100 p-8">
         <h1 className="text-3xl font-semibold tracking-tight">从灵感到发布的个人内容工作台</h1>
         <p className="mt-2 max-w-2xl text-stone-600">

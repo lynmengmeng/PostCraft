@@ -1,30 +1,30 @@
 import type { ContentProject, Platform } from "@/lib/types";
 import { platformLabels } from "@/lib/api";
 import { resolveImageUrl } from "@/lib/export";
-
-function renderMarkdown(body: string): string {
-  return body
-    .split("\n")
-    .map((line) => {
-      if (line.startsWith("## ")) return `<h3 class="mt-4 mb-2 text-lg font-semibold">${line.slice(3)}</h3>`;
-      if (line.startsWith("# ")) return `<h2 class="mt-4 mb-2 text-xl font-bold">${line.slice(2)}</h2>`;
-      if (line.startsWith("> ")) return `<blockquote class="border-l-4 border-stone-300 pl-3 text-stone-600">${line.slice(2)}</blockquote>`;
-      if (!line.trim()) return "<br />";
-      return `<p class="mb-3 leading-8">${line}</p>`;
-    })
-    .join("");
-}
+import { renderArticleMarkdown, renderXhsBody } from "@/lib/markdown";
 
 export function WechatPreview({ content }: { content: ContentProject["platforms"]["wechat"] }) {
   return (
-    <div className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
-      <div className="mb-4 text-xs uppercase tracking-wide text-stone-400">公众号预览</div>
-      <h2 className="text-2xl font-bold leading-snug">{content.title || "标题待生成"}</h2>
-      <p className="mt-3 text-sm text-stone-500">{content.summary || "摘要待生成"}</p>
-      <div
-        className="prose prose-stone mt-6 max-w-none text-[15px]"
-        dangerouslySetInnerHTML={{ __html: renderMarkdown(content.body || "正文待生成") }}
-      />
+    <div className="wechat-preview mx-auto max-w-[480px] overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm">
+      <div className="border-b border-stone-100 bg-stone-50 px-5 py-3 text-xs tracking-wide text-stone-400">
+        公众号预览
+      </div>
+      <div className="px-6 py-6">
+        <h1 className="text-[22px] font-bold leading-snug tracking-tight text-stone-900">
+          {content.title || "标题待生成"}
+        </h1>
+        {content.summary && (
+          <p className="mt-4 rounded-lg border-l-4 border-amber-400 bg-amber-50/60 px-4 py-3 text-sm leading-relaxed text-stone-600">
+            {content.summary}
+          </p>
+        )}
+        <div
+          className="article-body mt-6 text-[16px] text-stone-800"
+          dangerouslySetInnerHTML={{
+            __html: renderArticleMarkdown(content.body || "正文待生成"),
+          }}
+        />
+      </div>
     </div>
   );
 }
@@ -36,33 +36,51 @@ export function XiaohongshuPreview({
 }) {
   const cover = resolveImageUrl(content.cover_image);
   return (
-    <div className="mx-auto max-w-sm rounded-3xl border border-stone-200 bg-white p-4 shadow-sm">
+    <div className="xhs-preview mx-auto max-w-[360px] overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm">
       <div
-        className="mb-3 aspect-[3/4] overflow-hidden rounded-2xl bg-gradient-to-br from-amber-100 to-orange-200"
+        className="relative aspect-[3/4] overflow-hidden bg-gradient-to-br from-rose-50 to-orange-100"
         style={
           cover
-            ? { backgroundImage: `url(${cover})`, backgroundSize: "cover", backgroundPosition: "center" }
+            ? {
+                backgroundImage: `url(${cover})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }
             : undefined
         }
       >
         {!cover && (
-          <div className="flex h-full flex-col justify-end p-4">
-            <div className="text-lg font-semibold leading-snug text-stone-800">
+          <div className="flex h-full flex-col justify-end bg-gradient-to-t from-black/40 to-transparent p-5">
+            <div className="text-lg font-semibold leading-snug text-white drop-shadow">
               {content.title || "笔记标题"}
             </div>
           </div>
         )}
       </div>
-      {cover && <div className="mb-2 text-lg font-semibold">{content.title || "笔记标题"}</div>}
-      <div className="whitespace-pre-wrap text-sm leading-7 text-stone-700">
-        {content.body || "正文待生成"}
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {(content.tags || []).map((tag) => (
-          <span key={tag} className="rounded-full bg-rose-50 px-2 py-1 text-xs text-rose-600">
-            #{tag}
-          </span>
-        ))}
+      <div className="px-4 py-4">
+        {cover && (
+          <h2 className="mb-3 text-[17px] font-bold leading-snug text-stone-900">
+            {content.title || "笔记标题"}
+          </h2>
+        )}
+        <div
+          className="xhs-body text-[15px] text-stone-700"
+          dangerouslySetInnerHTML={{
+            __html: renderXhsBody(content.body || "正文待生成"),
+          }}
+        />
+        {(content.tags || []).length > 0 && (
+          <div className="mt-5 flex flex-wrap gap-2 border-t border-stone-100 pt-4">
+            {content.tags.map((tag) => (
+              <span
+                key={tag}
+                className="rounded-full bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-600"
+              >
+                #{tag}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -70,36 +88,44 @@ export function XiaohongshuPreview({
 
 export function DouyinPreview({ content }: { content: ContentProject["platforms"]["douyin"] }) {
   return (
-    <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
-      <div className="mb-4 text-xs uppercase tracking-wide text-stone-400">抖音口播预览</div>
-      <div className="rounded-xl bg-stone-900 p-4 text-white">
-        <div className="text-xs text-stone-400">3 秒钩子</div>
-        <div className="mt-1 text-lg font-semibold">{content.hook || "钩子待生成"}</div>
-        <div className="mt-2 text-xs text-stone-400">时长 {content.duration || "90s"}</div>
+    <div className="rounded-2xl border border-stone-200 bg-white shadow-sm">
+      <div className="border-b border-stone-100 px-4 py-3 text-xs tracking-wide text-stone-400">
+        抖音口播预览
       </div>
-      <div className="mt-4 overflow-hidden rounded-xl border border-stone-200">
-        <table className="min-w-full text-left text-sm">
-          <thead className="bg-stone-100 text-stone-600">
-            <tr>
-              <th className="px-3 py-2">镜号</th>
-              <th className="px-3 py-2">时长</th>
-              <th className="px-3 py-2">口播</th>
-              <th className="px-3 py-2">字幕</th>
-              <th className="px-3 py-2">画面</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(content.script || []).map((scene) => (
-              <tr key={scene.index} className="border-t border-stone-100">
-                <td className="px-3 py-3 align-top">{scene.index}</td>
-                <td className="px-3 py-3 align-top">{scene.duration}</td>
-                <td className="px-3 py-3 align-top whitespace-pre-wrap">{scene.narration}</td>
-                <td className="px-3 py-3 align-top text-stone-500">{scene.subtitle}</td>
-                <td className="px-3 py-3 align-top text-stone-500">{scene.visual}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="p-4">
+        <div className="rounded-xl bg-gradient-to-br from-stone-900 to-stone-800 p-5 text-white">
+          <div className="text-xs uppercase tracking-wider text-stone-400">3 秒钩子</div>
+          <div className="mt-2 text-xl font-semibold leading-snug">{content.hook || "钩子待生成"}</div>
+          <div className="mt-3 inline-block rounded-full bg-white/10 px-3 py-1 text-xs text-stone-300">
+            预计时长 {content.duration || "90s"}
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {(content.script || []).map((scene) => (
+            <div
+              key={scene.index}
+              className="rounded-xl border border-stone-200 bg-stone-50/80 p-4"
+            >
+              <div className="flex items-center gap-2 text-xs text-stone-500">
+                <span className="rounded bg-stone-900 px-2 py-0.5 font-medium text-white">
+                  {scene.index}
+                </span>
+                <span>{scene.duration}</span>
+                {scene.subtitle && (
+                  <>
+                    <span>·</span>
+                    <span className="text-amber-700">{scene.subtitle}</span>
+                  </>
+                )}
+              </div>
+              <p className="mt-2 text-[15px] leading-relaxed text-stone-800">{scene.narration}</p>
+              {scene.visual && (
+                <p className="mt-2 text-xs text-stone-500">画面：{scene.visual}</p>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

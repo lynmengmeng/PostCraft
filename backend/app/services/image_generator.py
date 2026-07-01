@@ -46,3 +46,21 @@ class ImageGenerator:
 
         text = quote(prompt[:16] or "cover")
         return f"https://placehold.co/600x800/f5f5f4/78716c?text={text}"
+
+    def save_upload(self, content: bytes, content_type: str) -> str:
+        allowed = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+        if content_type not in allowed:
+            raise ValueError("仅支持 JPEG、PNG、WebP、GIF 图片")
+        if len(content) > 5 * 1024 * 1024:
+            raise ValueError("图片大小不能超过 5MB")
+
+        ext_map = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+        }
+        filename = f"{uuid4().hex}{ext_map[content_type]}"
+        path = self.output_dir / filename
+        path.write_bytes(content)
+        return f"/api/images/{filename}"

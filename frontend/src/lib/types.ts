@@ -96,6 +96,8 @@ export interface ContentProject {
   titles: TitleCandidate[];
   cover_assets: CoverAsset[];
   chat_history: ChatMessage[];
+  chat_summary?: string;
+  chat_summary_through?: number;
   versions?: ProjectVersion[];
   status: ProjectStatus;
   publish_records: PublishRecord[];

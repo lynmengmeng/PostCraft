@@ -1,0 +1,10 @@
+# Force UTF-8 text files (prevents UTF-16 corruption on Windows)
+*.md text eol=lf encoding=utf-8
+*.json text eol=lf encoding=utf-8
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

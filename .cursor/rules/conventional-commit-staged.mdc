@@ -1,0 +1,22 @@
+---
+description: >-
+  Draft git commit messages from staged/indexed changes: Conventional Commits 1.0,
+  mandatory git diff --cached (do not invent hunks). Subject description and body in
+  Simplified Chinese after the colon; type/scope stay English.
+  Applies when user asks for commit text, staged commit message, Conventional Commits,
+  changelog-style summary from diff, git commit wording, PR title aligned to commits,
+  or 提交信息 / commit 文案.
+alwaysApply: false
+---
+
+# 暂存区 Conventional Commit 文案
+
+Canonical spec lives in `@.cursor/skills/conventional-commit-staged/SKILL.md` — follow it for language rules, message shape, type table, footers, examples, and anti-patterns.
+
+Operational minimum:
+
+1. **Always inspect actual staged hunks**: run **`git diff --cached`** (large repos: `git diff --cached --stat` first, then `git diff --cached -- path…`). Never guess file contents not present in output.
+2. If **no staged changes**: say索引区为空 clearly; suggest `git add`; only draft from unstaged (`git diff`) when the **user explicitly** asks for that.
+3. **Output**: paste-ready subject line first; optionally full title + blank line + Chinese body + footers in one fenced block; call out breaking API/behavior with `!` before `:` and/or **`BREAKING CHANGE:`** (per Conventional Commits), with explanatory text after the colon mostly in **Simplified Chinese** (issue refs / SHAs stay as-is).
+
+For manual pulls in chat, mention this rule with `@conventional-commit-staged` alongside the SKILL file if helpful.

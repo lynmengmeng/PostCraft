@@ -1,0 +1,13 @@
+{
+  "name": "postcraft",
+  "private": true,
+  "scripts": {
+    "predev": "powershell -ExecutionPolicy Bypass -File scripts/free-port.ps1 -Port 8082",
+    "dev": "concurrently -n backend,frontend -c blue,green \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && .venv\\Scripts\\python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8082",
+    "dev:frontend": "cd frontend && npm run dev -- -p 3002"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

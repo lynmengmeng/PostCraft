@@ -3,14 +3,23 @@ param(
     [string[]]$AllowedProcessNames = @("python")
 )
 
-$lines = netstat -ano | Select-String ":$Port\s"
 $processIds = @()
 
-foreach ($line in $lines) {
-    if ($line -notmatch "LISTENING") { continue }
-    $parts = ($line -replace "\s+", " ").Trim().Split(" ")
-    $processId = $parts[-1]
-    if ($processId -match "^\d+$") { $processIds += [int]$processId }
+try {
+    $processIds += Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess -Unique
+} catch {
+    # Fallback for environments without Get-NetTCPConnection
+}
+
+if ($processIds.Count -eq 0) {
+    $lines = netstat -ano | Select-String ":$Port\s"
+    foreach ($line in $lines) {
+        if ($line -notmatch "LISTENING") { continue }
+        $parts = ($line -replace "\s+", " ").Trim().Split(" ")
+        $processId = $parts[-1]
+        if ($processId -match "^\d+$") { $processIds += [int]$processId }
+    }
 }
 
 $processIds = $processIds | Sort-Object -Unique
@@ -23,7 +32,8 @@ foreach ($processId in $processIds) {
         exit 1
     }
     Write-Host "Stopping stale $($proc.ProcessName) on port $Port (PID $processId)..."
-    Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+    # /T ensures uvicorn reload workers are also terminated
+    cmd /c "taskkill /F /PID $processId /T >nul 2>&1"
 }
 
 Write-Host "Port $Port is ready."

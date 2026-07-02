@@ -123,10 +123,17 @@ class ContentPipeline:
 
         humanized = project.humanized or project.draft or project.inspiration
         skill = self.skills.load("postcraft-orchestrator")
+        incorporate_hint = ""
+        if len(message.strip()) >= 80:
+            incorporate_hint = (
+                "若用户消息是个人经历、素材片段或补充内容，请将其自然融入初稿并重写相关段落；"
+                "不要只做错别字或语法校对。\n"
+            )
         system = (
             f"{skill}\n\n"
-            "根据用户指令修改观察型初稿 Markdown，只改初稿，不涉及各平台格式。"
-            "输出 JSON：{\"humanized\":\"完整修改后的 Markdown\"}"
+            "根据用户指令修改观察型初稿 Markdown，只改初稿，不涉及各平台格式。\n"
+            f"{incorporate_hint}"
+            '输出 JSON：{"humanized":"完整修改后的 Markdown"}'
         )
         user = (
             build_chat_context_block(project)

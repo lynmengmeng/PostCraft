@@ -23,7 +23,12 @@ from app.services.chat_context import (
 )
 from app.services.fact_check import scan_project
 from app.services.image_generator import ImageGenerator
-from app.services.intent_parser import ParsedIntent, parse_intent
+from app.services.intent_parser import (
+    NARRATIVE_REFINE_THRESHOLD,
+    ParsedIntent,
+    is_explicit_fact_check_request,
+    parse_intent,
+)
 from app.services.llm_client import LLMClient
 from app.services.mock_generator import (
     build_mock_cover_assets,
@@ -58,7 +63,7 @@ class ChatOrchestrator:
         action: str | None = None,
         target_platforms: list[str] | None = None,
     ) -> tuple[ContentProject, ContentPatch, ChatMessage]:
-        parsed = self._resolve_intent(message, selected_platform, action, target_platforms)
+        parsed = self._resolve_intent(message, selected_platform, action, target_platforms, project)
         user_content = message.strip() or self._default_user_label(parsed)
         project.chat_history.append(ChatMessage(role="user", content=user_content))
 
@@ -92,6 +97,7 @@ class ChatOrchestrator:
         selected_platform: str,
         action: str | None,
         target_platforms: list[str] | None,
+        project: ContentProject,
     ) -> ParsedIntent:
         if action == "generate_draft":
             return ParsedIntent("generate_draft", [], [])
@@ -102,7 +108,33 @@ class ChatOrchestrator:
             return ParsedIntent("generate_platform", platforms, [])
         if action == "refine_draft":
             return ParsedIntent("refine_draft", [], [])
-        return parse_intent(message, selected_platform)  # type: ignore[arg-type]
+        has_draft = bool(project.humanized or project.draft)
+        parsed = parse_intent(message, selected_platform, has_draft=has_draft)  # type: ignore[arg-type]
+        return self._coerce_draft_refine_intent(message, parsed, has_draft, action)
+
+    def _coerce_draft_refine_intent(
+        self,
+        message: str,
+        parsed: ParsedIntent,
+        has_draft: bool,
+        action: str | None,
+    ) -> ParsedIntent:
+        """已有初稿时，避免「添加了这个检查」等日常用语误触 fact_check。"""
+        if not has_draft or action:
+            return parsed
+
+        text = message.strip()
+        if parsed.intent == "fact_check" and not is_explicit_fact_check_request(text):
+            return ParsedIntent("refine_draft", [], parsed.constraints)
+
+        if len(text) >= NARRATIVE_REFINE_THRESHOLD and parsed.intent in {
+            "fact_check",
+            "patch_platform",
+            "cover_assets",
+        }:
+            return ParsedIntent("refine_draft", [], parsed.constraints)
+
+        return parsed
 
     def _default_user_label(self, parsed: ParsedIntent) -> str:
         labels = {
@@ -151,20 +183,7 @@ class ChatOrchestrator:
                     on_delta=on_delta,
                     with_titles=True,
                 )
-                patch_data = await self._attach_cover_images(
-                    {
-                        **patch_data,
-                        "cover_assets": await self.pipeline._generate_cover_prompts(
-                            project,
-                            style_profile,
-                            {
-                                k.replace("platforms.", ""): v
-                                for k, v in patch_data.items()
-                                if k.startswith("platforms.")
-                            },
-                        ),
-                    }
-                )
+                patch_data = await self._ensure_cover_assets(project, patch_data, style_profile)
                 return ContentPatch(
                     intent="generate_all",
                     target_platforms=ALL_PLATFORMS,
@@ -172,7 +191,9 @@ class ChatOrchestrator:
                     patch=patch_data,
                     changes=self._changes_from_patch(patch_data),
                 )
-            return build_mock_platforms(project, ALL_PLATFORMS, with_titles=True)
+            patch = build_mock_platforms(project, ALL_PLATFORMS, with_titles=True)
+            patch.patch = await self._ensure_cover_assets(project, patch.patch, style_profile)
+            return patch
 
         if parsed.intent == "generate_platform":
             targets = [p for p in parsed.target_platforms if p in ALL_PLATFORMS] or ALL_PLATFORMS
@@ -190,15 +211,27 @@ class ChatOrchestrator:
                     list(targets),
                     on_delta=on_delta,
                 )
+                if not project.cover_assets:
+                    patch_data = await self._ensure_cover_assets(
+                        project, patch_data, style_profile
+                    )
                 label = "、".join(targets)
+                summary = f"已根据当前初稿生成 {label} 内容。"
+                if not project.cover_assets and patch_data.get("cover_assets"):
+                    summary += " 已同步生成封面与配图。"
                 return ContentPatch(
                     intent="generate_platform",
                     target_platforms=targets,  # type: ignore[arg-type]
-                    summary=f"已根据当前初稿生成 {label} 内容。",
+                    summary=summary,
                     patch=patch_data,
                     changes=self._changes_from_patch(patch_data),
                 )
-            return build_mock_platforms(project, list(targets))
+            patch = build_mock_platforms(project, list(targets))
+            if not project.cover_assets:
+                patch.patch = await self._ensure_cover_assets(
+                    project, patch.patch, style_profile
+                )
+            return patch
 
         if parsed.intent == "generate_titles":
             if self.llm.status().configured:
@@ -296,6 +329,43 @@ class ChatOrchestrator:
             "配置 DEEPSEEK_API_KEY 或 OPENAI_API_KEY 后可启用 AI 对话润色。"
         )
         return fallback
+
+    def _platform_dict_from_patch(
+        self,
+        project: ContentProject,
+        patch_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        platforms: dict[str, Any] = {}
+        for key, value in patch_data.items():
+            if key.startswith("platforms."):
+                platforms[key.replace("platforms.", "", 1)] = value
+        for key, content in project.platforms.items():
+            if key in platforms:
+                continue
+            data = content.model_dump(mode="json")
+            if data.get("body") or data.get("title") or data.get("script"):
+                platforms[key] = data
+        return platforms
+
+    async def _ensure_cover_assets(
+        self,
+        project: ContentProject,
+        patch_data: dict[str, Any],
+        style_profile: AuthorStyleProfile,
+    ) -> dict[str, Any]:
+        platforms = self._platform_dict_from_patch(project, patch_data)
+        if not platforms:
+            return patch_data
+        return await self._attach_cover_images(
+            {
+                **patch_data,
+                "cover_assets": await self.pipeline._generate_cover_prompts(
+                    project,
+                    style_profile,
+                    platforms,
+                ),
+            }
+        )
 
     async def _attach_cover_images(self, patch_data: dict[str, Any]) -> dict[str, Any]:
         assets = patch_data.get("cover_assets") or []

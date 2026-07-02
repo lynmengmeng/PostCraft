@@ -8,6 +8,7 @@ import {
   getPlatformCopyText,
 } from "@/components/preview/PlatformPreview";
 import { Icon } from "@/components/ui/Icon";
+import { ResizableColumns } from "@/components/ui/ResizableColumns";
 import { api, platformLabels, type ChatOptions } from "@/lib/api";
 import { exportAllPlatforms, resolveImageUrl } from "@/lib/export";
 import type { ContentProject, Platform } from "@/lib/types";
@@ -53,12 +54,6 @@ export default function CreateStudioPage() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState<StudioViewMode>("split");
-
-  const chatCol = "col-span-3";
-  const contentCol =
-    viewMode === "preview" ? "hidden" : viewMode === "edit" ? "col-span-9" : "col-span-4";
-  const previewCol =
-    viewMode === "edit" ? "hidden" : viewMode === "preview" ? "col-span-9" : "col-span-5";
 
   useEffect(() => {
     api
@@ -235,9 +230,16 @@ export default function CreateStudioPage() {
         </div>
       </header>
 
-      <div className="grid flex-1 grid-cols-12 gap-gutter overflow-hidden p-4">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
+        <ResizableColumns
+          panels={[
+            {
+              id: "chat",
+              defaultPercent: 25,
+              minPercent: 12,
+              content: (
         <section
-          className={`${chatCol} custom-shadow flex flex-col overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest`}
+          className="custom-shadow flex h-full flex-col overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest"
         >
           <div className="flex items-center justify-between border-b border-outline-variant/10 bg-surface-container-low/30 px-4 py-3">
             <span className="flex items-center gap-2 text-[13px] font-semibold text-primary">
@@ -245,43 +247,36 @@ export default function CreateStudioPage() {
               AI 协作
             </span>
           </div>
-          <div className="custom-scrollbar flex-1 space-y-4 overflow-y-auto p-4">
-            <div className="space-y-1">
-              <p className="text-[11px] uppercase tracking-wider text-outline">当前选题</p>
-              <p className="font-headline text-[18px] font-semibold italic text-on-surface">
-                {project.inspiration.slice(0, 80)}
+          {hasDraft(project) && (
+            <div className="shrink-0 border-b border-outline-variant/10 bg-surface-container-low/50 p-4">
+              <p className="mb-3 text-[13px] font-semibold text-on-surface">初稿已就绪</p>
+              <p className="mb-4 text-[12px] leading-relaxed text-on-surface-variant">
+                继续对话可打磨初稿。满意后，再按需生成各平台内容。
               </p>
-            </div>
-
-            {hasDraft(project) && (
-              <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low/50 p-4">
-                <p className="mb-3 text-[13px] font-semibold text-on-surface">初稿已就绪</p>
-                <p className="mb-4 text-[12px] leading-relaxed text-on-surface-variant">
-                  继续对话可打磨初稿。满意后，再按需生成各平台内容。
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {(Object.keys(platformLabels) as Platform[]).map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      onClick={() => generatePlatform(item)}
-                      disabled={sending}
-                      className="rounded-full border border-outline-variant bg-surface px-3 py-1.5 text-[12px] font-medium text-on-surface-variant transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
-                    >
-                      生成{platformLabels[item]}
-                    </button>
-                  ))}
+              <div className="flex flex-wrap gap-2">
+                {(Object.keys(platformLabels) as Platform[]).map((item) => (
                   <button
+                    key={item}
                     type="button"
-                    onClick={() => generatePlatform("all")}
+                    onClick={() => generatePlatform(item)}
                     disabled={sending}
-                    className="rounded-full bg-primary px-3 py-1.5 text-[12px] font-bold text-on-primary disabled:opacity-50"
+                    className="rounded-full border border-outline-variant bg-surface px-3 py-1.5 text-[12px] font-medium text-on-surface-variant transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
                   >
-                    一键生成三平台
+                    生成{platformLabels[item]}
                   </button>
-                </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => generatePlatform("all")}
+                  disabled={sending}
+                  className="rounded-full bg-primary px-3 py-1.5 text-[12px] font-bold text-on-primary disabled:opacity-50"
+                >
+                  一键生成三平台
+                </button>
               </div>
-            )}
+            </div>
+          )}
+          <div className="custom-scrollbar flex-1 space-y-4 overflow-y-auto p-4">
             {project.chat_summary && (
               <p
                 className="text-xs text-on-surface-variant/60 line-clamp-2"
@@ -290,20 +285,24 @@ export default function CreateStudioPage() {
                 摘要已压缩较早对话
               </p>
             )}
-            {project.chat_history.map((item) => (
-              <div
-                key={item.id}
-                className={`rounded-xl p-4 text-sm leading-relaxed ${
-                  item.role === "user"
-                    ? "border border-primary/10 bg-primary/5 text-primary"
-                    : "bg-surface-container-low text-on-surface-variant"
-                }`}
-              >
-                {item.content}
-              </div>
-            ))}
+            {project.chat_history.map((item) =>
+              item.role === "user" ? (
+                <div key={item.id} className="flex justify-end">
+                  <div className="max-w-[88%] rounded-[12px] rounded-tr-none bg-primary/12 px-5 py-3 text-left text-sm leading-relaxed text-on-surface">
+                    {item.content}
+                  </div>
+                </div>
+              ) : (
+                <div
+                  key={item.id}
+                  className="rounded-2xl border border-outline-variant/15 bg-surface-container-lowest p-4 text-sm leading-relaxed text-on-surface shadow-sm"
+                >
+                  {item.content}
+                </div>
+              ),
+            )}
             {streamingLines.length > 0 && (
-              <div className="rounded-xl bg-surface-container-low p-4 text-sm text-on-surface-variant">
+              <div className="rounded-2xl border border-outline-variant/15 bg-surface-container-lowest p-4 text-sm leading-relaxed text-on-surface shadow-sm">
                 {streamingLines.map((line, i) => (
                   <div key={`${line}-${i}`}>{line}</div>
                 ))}
@@ -350,9 +349,16 @@ export default function CreateStudioPage() {
             {error && <p className="text-xs text-error">{error}</p>}
           </div>
         </section>
-
+              ),
+            },
+            {
+              id: "content",
+              defaultPercent: viewMode === "edit" ? 75 : (4 / 12) * 100,
+              minPercent: 12,
+              hidden: viewMode === "preview",
+              content: (
         <section
-          className={`${contentCol} custom-shadow flex flex-col overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest`}
+          className="custom-shadow flex h-full flex-col overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest"
         >
           <div className="flex border-b border-outline-variant/10 bg-surface-container-low/20">
             <button
@@ -458,20 +464,30 @@ export default function CreateStudioPage() {
 
             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low/50 p-4">
               <h3 className="text-sm font-medium text-on-surface-variant">封面与配图</h3>
-              {project.cover_assets.map((asset) => (
-                <div key={asset.id} className="mt-3 rounded-lg bg-surface-container-low p-3 text-sm">
-                  {asset.image_url && (
-                    <img
-                      src={resolveImageUrl(asset.image_url)}
-                      alt={asset.headline}
-                      className="mb-2 aspect-[3/4] w-full rounded-lg object-cover"
-                    />
-                  )}
-                  <div className="font-medium">{asset.headline}</div>
-                  <div className="text-on-surface-variant">{asset.subheadline}</div>
-                  <div className="mt-2 text-xs text-on-surface-variant/60">{asset.prompt}</div>
-                </div>
-              ))}
+              {project.cover_assets.length === 0 ? (
+                <p className="mt-3 text-sm leading-relaxed text-on-surface-variant">
+                  生成任意平台内容后会自动生成封面。也可在对话中发送「生成封面配图」。
+                </p>
+              ) : (
+                project.cover_assets.map((asset) => (
+                  <div key={asset.id} className="mt-3 rounded-lg bg-surface-container-low p-3 text-sm">
+                    {asset.image_url ? (
+                      <img
+                        src={resolveImageUrl(asset.image_url)}
+                        alt={asset.headline}
+                        className="mb-2 aspect-[3/4] w-full rounded-lg object-cover"
+                      />
+                    ) : (
+                      <div className="mb-2 flex aspect-[3/4] w-full items-center justify-center rounded-lg bg-surface-container text-xs text-on-surface-variant">
+                        配图生成中或失败，可在对话中发送「生成封面配图」重试
+                      </div>
+                    )}
+                    <div className="font-medium">{asset.headline}</div>
+                    <div className="text-on-surface-variant">{asset.subheadline}</div>
+                    <div className="mt-2 text-xs text-on-surface-variant/60">{asset.prompt}</div>
+                  </div>
+                ))
+              )}
             </div>
 
             {(project.versions || []).length > 0 && (
@@ -497,8 +513,15 @@ export default function CreateStudioPage() {
           </div>
           </div>
         </section>
-
-        <section className={`${previewCol} custom-shadow flex min-h-0 flex-col overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest`}>
+              ),
+            },
+            {
+              id: "preview",
+              defaultPercent: viewMode === "preview" ? 75 : (5 / 12) * 100,
+              minPercent: 12,
+              hidden: viewMode === "edit",
+              content: (
+        <section className="custom-shadow flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest">
           <div className="shrink-0 border-b border-outline-variant/10 bg-surface-container-low/30 px-4 py-3">
             <span className="text-[13px] font-semibold uppercase tracking-wider text-on-surface-variant">
               预览 · {editorTab === "draft" ? "初稿" : platformLabels[previewPlatform]}
@@ -514,6 +537,10 @@ export default function CreateStudioPage() {
             )}
           </div>
         </section>
+              ),
+            },
+          ]}
+        />
       </div>
     </div>
   );

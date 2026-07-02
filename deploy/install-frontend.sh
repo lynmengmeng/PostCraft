@@ -6,6 +6,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${POSTCRAFT_ROOT:-$SCRIPT_DIR/..}" && pwd)"
 PORT="${POSTCRAFT_WEB_PORT:-3002}"
 
+write_default_env_production() {
+  cat > .env.production <<'EOF'
+NEXT_PUBLIC_BASE_PATH=/postcraft
+NEXT_PUBLIC_API_URL=https://test.studyx.ai/postcraft-api/api
+NEXT_PUBLIC_SITE_URL=https://test.studyx.ai/postcraft
+EOF
+  echo "Created .env.production with default test values"
+}
+
 if [[ ! -d "$ROOT/frontend" ]]; then
   echo "ERROR: frontend not found at $ROOT/frontend"
   echo "       Set POSTCRAFT_ROOT to your repo path, e.g.:"
@@ -18,8 +27,12 @@ echo "==> PostCraft frontend install (root: $ROOT, port: $PORT)"
 cd "$ROOT/frontend"
 
 if [[ ! -f .env.production ]]; then
-  cp .env.test.example .env.production
-  echo "Created .env.production from .env.test.example"
+  if [[ -f .env.test.example ]]; then
+    cp .env.test.example .env.production
+    echo "Created .env.production from .env.test.example"
+  else
+    write_default_env_production
+  fi
 fi
 
 npm ci

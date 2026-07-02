@@ -1,12 +1,13 @@
 from functools import lru_cache
 from pathlib import Path
 import json
+import os
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-API_KEYS_PATH = ROOT_DIR / "config" / "api_keys.local.json"
+DEFAULT_API_KEYS_PATH = ROOT_DIR / "config" / "api_keys.local.json"
 
 
 class Settings(BaseSettings):
@@ -37,6 +38,15 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     openai_image_model: str = "gpt-image-2"
     openai_skip_proxy: bool = True
+    # 可选：指向 studyx-agent-backend/config/api_keys.local.json 等同路径
+    api_keys_file: str = ""
+
+    @field_validator("api_keys_file", mode="before")
+    @classmethod
+    def strip_api_keys_file(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
     @field_validator(
         "deepseek_api_key",
@@ -97,18 +107,29 @@ class Settings(BaseSettings):
         return ("mock", "", "", "")
 
 
-def load_api_keys_file() -> dict:
-    if not API_KEYS_PATH.is_file():
+def resolve_api_keys_path(settings: Settings | None = None) -> Path:
+    """Resolve api_keys.local.json path: API_KEYS_FILE env > settings.api_keys_file > default."""
+    env_raw = os.environ.get("API_KEYS_FILE", "").strip()
+    if env_raw:
+        return Path(env_raw).expanduser().resolve()
+    if settings is not None and settings.api_keys_file.strip():
+        return Path(settings.api_keys_file.strip()).expanduser().resolve()
+    return DEFAULT_API_KEYS_PATH.resolve()
+
+
+def load_api_keys_file(*, settings: Settings | None = None) -> dict:
+    path = resolve_api_keys_path(settings)
+    if not path.is_file():
         return {}
     try:
-        return json.loads(API_KEYS_PATH.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
 
 
 def _merge_api_keys(settings: Settings) -> Settings:
     """与 studyx-agent-backend 一致：.env 优先，api_keys.local.json 补齐空项。"""
-    keys = load_api_keys_file()
+    keys = load_api_keys_file(settings=settings)
     if not keys:
         return settings
 

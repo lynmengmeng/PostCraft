@@ -97,6 +97,9 @@ class ChatMessage(BaseModel):
     role: Literal["user", "assistant", "system"] = "user"
     content: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    action: str | None = None
+    target_platforms: list[str] = Field(default_factory=list)
+    attachment_urls: list[str] = Field(default_factory=list)
 
 
 class ChangeRecord(BaseModel):
@@ -231,6 +234,12 @@ class ChatRequest(BaseModel):
     ] | None = None
     target_platforms: list[Platform] | None = None
     attachment_urls: list[str] = Field(default_factory=list)
+
+
+class RegenerateChatRequest(BaseModel):
+    assistant_message_id: str
+    selected_platform: Platform = "wechat"
+    stream: bool = False
 
 
 class ApplyTitleRequest(BaseModel):

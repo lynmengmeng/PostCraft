@@ -1,0 +1,16 @@
+[Unit]
+Description=PostCraft API
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/postcraft/backend
+EnvironmentFile=/opt/postcraft/.env
+ExecStart=/opt/postcraft/backend/.venv/bin/python -m uvicorn app.main:app \
+  --host 127.0.0.1 --port 18231 --workers 1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

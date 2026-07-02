@@ -15,6 +15,7 @@ from app.models.schemas import (
     ApplyTitleRequest,
     AuthorStyleProfile,
     ChatRequest,
+    RegenerateChatRequest,
     ContentProject,
     Inspiration,
     InspirationCreate,
@@ -227,6 +228,38 @@ async def _chat_once(
     }
 
 
+async def _regenerate_once(
+    project: ContentProject,
+    payload: RegenerateChatRequest,
+    db: Session,
+    deltas: list[str] | None = None,
+) -> dict:
+    orchestrator = ChatOrchestrator(get_settings())
+    style_profile = style_repo.get(db)
+
+    async def on_delta(text: str) -> None:
+        if deltas is not None:
+            deltas.append(text)
+
+    try:
+        updated, patch, assistant = await orchestrator.regenerate_assistant(
+            project,
+            payload.assistant_message_id,
+            payload.selected_platform,
+            style_profile,
+            on_delta=on_delta if payload.stream else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    saved = project_repo.save_project(db, updated)
+    return {
+        "project": saved.model_dump(mode="json"),
+        "patch": patch.model_dump(mode="json"),
+        "assistant_message": assistant.model_dump(mode="json"),
+    }
+
+
 @router.get("/images/{filename}")
 def get_image(filename: str):
     settings = get_settings()
@@ -374,6 +407,66 @@ async def chat_with_project(
             return
         except Exception as exc:
             message = f"生成失败：{exc}"
+            yield f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
+            return
+        yield f"event: done\ndata: {json.dumps(result, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.post("/projects/{project_id}/chat/regenerate")
+async def regenerate_chat_message(
+    project_id: str,
+    payload: RegenerateChatRequest,
+    db: Session = Depends(get_db),
+):
+    project = project_repo.get_project(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not payload.stream:
+        return await _regenerate_once(project, payload, db)
+
+    async def event_stream() -> AsyncIterator[str]:
+        deltas: list[str] = []
+        yield f"event: delta\ndata: {json.dumps({'text': '开始重新生成…'}, ensure_ascii=False)}\n\n"
+
+        async def run_regenerate() -> dict:
+            return await _regenerate_once(project, payload, db, deltas=deltas)
+
+        import asyncio
+
+        from openai import APIStatusError, AuthenticationError
+
+        task = asyncio.create_task(run_regenerate())
+        seen = 0
+        while not task.done():
+            while seen < len(deltas):
+                yield f"event: delta\ndata: {json.dumps({'text': deltas[seen]}, ensure_ascii=False)}\n\n"
+                seen += 1
+            await asyncio.sleep(0.15)
+        while seen < len(deltas):
+            yield f"event: delta\ndata: {json.dumps({'text': deltas[seen]}, ensure_ascii=False)}\n\n"
+            seen += 1
+        try:
+            result = task.result()
+        except HTTPException as exc:
+            message = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            yield f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
+            return
+        except AuthenticationError:
+            message = (
+                "LLM API Key 无效或已过期，请检查 .env 中的 DEEPSEEK_API_KEY / OPENAI_API_KEY "
+                "是否与 LLM_PROVIDER 匹配，修改后重启后端。"
+            )
+            yield f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
+            return
+        except APIStatusError as exc:
+            message = f"LLM 请求失败（{exc.status_code}）：{exc}"
+            yield f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
+            return
+        except Exception as exc:
+            message = f"重新生成失败：{exc}"
             yield f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
             return
         yield f"event: done\ndata: {json.dumps(result, ensure_ascii=False)}\n\n"

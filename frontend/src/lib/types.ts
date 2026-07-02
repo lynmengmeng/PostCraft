@@ -81,6 +81,9 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   created_at: string;
+  action?: string | null;
+  target_platforms?: string[];
+  attachment_urls?: string[];
 }
 
 export interface ProjectVersion {

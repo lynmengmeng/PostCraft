@@ -163,6 +163,79 @@ export const api = {
     throw new Error("未收到完整流式响应");
   },
 
+  regenerateChat: async (
+    id: string,
+    assistantMessageId: string,
+    selectedPlatform: Platform,
+    stream = true,
+    onDelta?: (text: string) => void,
+  ) => {
+    const body = {
+      assistant_message_id: assistantMessageId,
+      selected_platform: selectedPlatform,
+      stream,
+    };
+    if (!stream) {
+      return request<ChatResult>(`/projects/${id}/chat/regenerate`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/projects/${id}/chat/regenerate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      throw new ApiError(formatApiError(error, API_BASE), {
+        cause: error,
+        isNetworkError: isNetworkFetchError(error),
+      });
+    }
+
+    if (!response.ok || !response.body) {
+      const detail = await response.text();
+      throw new Error(detail || "重新生成失败");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() || "";
+      for (const chunk of chunks) {
+        if (chunk.startsWith("event: delta")) {
+          const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
+          if (dataLine) {
+            const payload = JSON.parse(dataLine.slice(6)) as { text: string };
+            onDelta?.(payload.text);
+          }
+        }
+        if (chunk.startsWith("event: error")) {
+          const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
+          if (dataLine) {
+            const payload = JSON.parse(dataLine.slice(6)) as { message?: string };
+            throw new Error(payload.message || "重新生成失败");
+          }
+        }
+        if (chunk.startsWith("event: done")) {
+          const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
+          if (dataLine) return JSON.parse(dataLine.slice(6)) as ChatResult;
+        }
+      }
+    }
+
+    throw new Error("未收到完整流式响应");
+  },
+
   listInspirations: () => request<Inspiration[]>("/inspirations"),
   inspirationStats: () => request<InspirationStats>("/inspirations/stats"),
   createInspiration: (

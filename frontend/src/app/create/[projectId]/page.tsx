@@ -65,6 +65,7 @@ export default function CreateStudioPage() {
   const [copyMode, setCopyMode] = useState<"rich" | "markdown">("rich");
   const [viewMode, setViewMode] = useState<StudioViewMode>("split");
   const [pendingAttachments, setPendingAttachments] = useState<string[]>([]);
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const chatFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -119,6 +120,33 @@ export default function CreateStudioPage() {
       setStreamingLines([]);
     } finally {
       setSending(false);
+    }
+  }
+
+  async function regenerateAssistantMessage(assistantMessageId: string) {
+    if (!project || sending || regeneratingId) return;
+    setRegeneratingId(assistantMessageId);
+    setSending(true);
+    setError("");
+    setStreamingLines([]);
+    try {
+      const result = await api.regenerateChat(
+        project.id,
+        assistantMessageId,
+        previewPlatform,
+        true,
+        (delta) => {
+          setStreamingLines((prev) => [...prev, delta]);
+        },
+      );
+      setProject(result.project);
+      setStreamingLines([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "重新生成失败");
+      setStreamingLines([]);
+    } finally {
+      setSending(false);
+      setRegeneratingId(null);
     }
   }
 
@@ -439,9 +467,26 @@ export default function CreateStudioPage() {
               ) : (
                 <div
                   key={item.id}
-                  className="rounded-2xl border border-outline-variant/15 bg-surface-container-lowest p-4 text-sm leading-relaxed text-on-surface shadow-sm"
+                  className={`group relative rounded-2xl border border-outline-variant/15 bg-surface-container-lowest p-4 text-sm leading-relaxed text-on-surface shadow-sm ${
+                    regeneratingId === item.id ? "ring-2 ring-primary/30" : ""
+                  }`}
                 >
                   {item.content}
+                  <div className="absolute right-2 top-2 flex opacity-0 transition-opacity group-hover:opacity-100">
+                    <button
+                      type="button"
+                      onClick={() => regenerateAssistantMessage(item.id)}
+                      disabled={sending}
+                      title="重新生成此回复"
+                      className="flex items-center gap-1 rounded-lg border border-outline-variant/40 bg-surface/95 px-2 py-1 text-[11px] text-on-surface-variant shadow-sm backdrop-blur hover:border-primary hover:text-primary disabled:opacity-50"
+                    >
+                      <Icon
+                        name={regeneratingId === item.id ? "progress_activity" : "refresh"}
+                        className={`text-[14px] ${regeneratingId === item.id ? "animate-spin" : ""}`}
+                      />
+                      {regeneratingId === item.id ? "生成中" : "重新生成"}
+                    </button>
+                  </div>
                 </div>
               ),
             )}

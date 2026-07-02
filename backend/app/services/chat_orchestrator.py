@@ -77,7 +77,15 @@ class ChatOrchestrator:
         user_content = message.strip() or self._default_user_label(parsed)
         if attachment_urls:
             user_content += f"\n[附件: {', '.join(attachment_urls)}]"
-        project.chat_history.append(ChatMessage(role="user", content=user_content))
+        project.chat_history.append(
+            ChatMessage(
+                role="user",
+                content=user_content,
+                action=action or None,
+                target_platforms=list(target_platforms or []),
+                attachment_urls=list(attachment_urls or []),
+            )
+        )
 
         if parsed.intent == "rollback":
             restored = self._rollback(project)
@@ -101,6 +109,71 @@ class ChatOrchestrator:
         )
         self._snapshot(project, patch.summary)
         updated = apply_patch(project, patch)
+        updated.updated_at = datetime.utcnow()
+        await self._maybe_refresh_chat_summary(updated)
+        updated.risk_warnings = self._build_warnings(updated, style_profile)
+        if updated.risk_warnings and patch.intent != "fact_check":
+            patch.summary += f" 检测到 {len(updated.risk_warnings)} 处表述风险，请在内容区查看。"
+        assistant = ChatMessage(role="assistant", content=patch.summary)
+        updated.chat_history.append(assistant)
+        return updated, patch, assistant
+
+    async def regenerate_assistant(
+        self,
+        project: ContentProject,
+        assistant_message_id: str,
+        selected_platform: str,
+        style_profile: AuthorStyleProfile,
+        on_delta: StreamCallback = None,
+    ) -> tuple[ContentProject, ContentPatch, ChatMessage]:
+        idx = next(
+            (i for i, item in enumerate(project.chat_history) if item.id == assistant_message_id),
+            -1,
+        )
+        if idx < 0 or project.chat_history[idx].role != "assistant":
+            raise ValueError("找不到可重新生成的助手消息")
+        if idx == 0 or project.chat_history[idx - 1].role != "user":
+            raise ValueError("无法重新生成此消息")
+
+        user_msg = project.chat_history[idx - 1]
+        turn_index = sum(1 for item in project.chat_history[:idx] if item.role == "assistant")
+        if turn_index >= len(project.versions):
+            raise ValueError("该消息缺少版本快照，请重新发送指令或使用「撤销上一版」")
+
+        restored = ContentProject.model_validate(deepcopy(project.versions[turn_index].snapshot))
+        restored.id = project.id
+        restored.versions = list(project.versions[:turn_index])
+
+        message = user_msg.content
+        if "\n[附件:" in message:
+            message = message.split("\n[附件:")[0].strip()
+
+        attachment_urls = list(user_msg.attachment_urls or [])
+        action = user_msg.action or None
+        target_platforms = list(user_msg.target_platforms or []) or None
+
+        parsed = self._resolve_intent(
+            message,
+            selected_platform,
+            action,
+            target_platforms,
+            restored,
+            attachment_urls=attachment_urls or None,
+        )
+
+        if on_delta:
+            await on_delta("正在重新生成回复…")
+
+        patch = await self._execute(
+            restored,
+            message,
+            parsed,
+            style_profile,
+            on_delta,
+            attachment_urls=attachment_urls or None,
+        )
+        self._snapshot(restored, patch.summary)
+        updated = apply_patch(restored, patch)
         updated.updated_at = datetime.utcnow()
         await self._maybe_refresh_chat_summary(updated)
         updated.risk_warnings = self._build_warnings(updated, style_profile)

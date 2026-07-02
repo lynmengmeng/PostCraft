@@ -2,10 +2,12 @@ import type {
   AuthorStyleProfile,
   ContentProject,
   Inspiration,
+  InspirationStats,
   LLMStatus,
   Platform,
   RiskWarning,
   Topic,
+  TopicStats,
 } from "./types";
 import { ApiError, formatApiError, isNetworkFetchError } from "./api-error";
 
@@ -41,6 +43,11 @@ export interface ChatResult {
   project: ContentProject;
   assistant_message: { content: string };
   patch?: Record<string, unknown>;
+}
+
+export interface ChatOptions {
+  action?: "generate_draft" | "generate_platform" | "generate_all" | "refine_draft";
+  target_platforms?: Platform[];
 }
 
 export const api = {
@@ -85,11 +92,19 @@ export const api = {
     selectedPlatform: Platform,
     stream = false,
     onDelta?: (text: string) => void,
+    options?: ChatOptions,
   ) => {
+    const body = {
+      message,
+      selected_platform: selectedPlatform,
+      stream,
+      ...(options?.action ? { action: options.action } : {}),
+      ...(options?.target_platforms ? { target_platforms: options.target_platforms } : {}),
+    };
     if (!stream) {
       return request<ChatResult>(`/projects/${id}/chat`, {
         method: "POST",
-        body: JSON.stringify({ message, selected_platform: selectedPlatform, stream: false }),
+        body: JSON.stringify(body),
       });
     }
 
@@ -98,7 +113,7 @@ export const api = {
       response = await fetch(`${API_BASE}/projects/${id}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, selected_platform: selectedPlatform, stream: true }),
+        body: JSON.stringify(body),
       });
     } catch (error) {
       throw new ApiError(formatApiError(error, API_BASE), {
@@ -129,6 +144,13 @@ export const api = {
             onDelta?.(payload.text);
           }
         }
+        if (chunk.startsWith("event: error")) {
+          const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
+          if (dataLine) {
+            const payload = JSON.parse(dataLine.slice(6)) as { message?: string };
+            throw new Error(payload.message || "流式请求失败");
+          }
+        }
         if (chunk.startsWith("event: done")) {
           const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
           if (dataLine) return JSON.parse(dataLine.slice(6)) as ChatResult;
@@ -140,10 +162,70 @@ export const api = {
   },
 
   listInspirations: () => request<Inspiration[]>("/inspirations"),
-  createInspiration: (content: string, tags: string[] = []) =>
+  inspirationStats: () => request<InspirationStats>("/inspirations/stats"),
+  createInspiration: (
+    content: string,
+    tags: string[] = [],
+    options?: { source_type?: Inspiration["source_type"]; source_url?: string; image_url?: string },
+  ) =>
     request<Inspiration>("/inspirations", {
       method: "POST",
-      body: JSON.stringify({ content, tags }),
+      body: JSON.stringify({
+        content,
+        tags,
+        source_type: options?.source_type ?? "manual",
+        source_url: options?.source_url ?? "",
+        image_url: options?.image_url ?? "",
+      }),
+    }),
+  uploadInspirationScreenshot: async (file: File, content = "", tags: string[] = []) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("content", content);
+    form.append("tags", tags.join(","));
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/inspirations/upload-screenshot`, {
+        method: "POST",
+        body: form,
+      });
+    } catch (error) {
+      throw new ApiError(formatApiError(error, API_BASE), {
+        cause: error,
+        isNetworkError: isNetworkFetchError(error),
+      });
+    }
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new ApiError(detail || `请求失败 (${response.status})`);
+    }
+    return response.json() as Promise<Inspiration>;
+  },
+  createInspirationFromLink: (url: string, content = "", tags: string[] = []) =>
+    request<Inspiration>("/inspirations/from-link", {
+      method: "POST",
+      body: JSON.stringify({ url, content, tags }),
+    }),
+  exportInspirations: () =>
+    request<{ version: number; exported_at: string; items: Inspiration[] }>("/inspirations/export"),
+  importInspirations: (items: Array<{ content: string; tags?: string[]; source_type?: Inspiration["source_type"] }>) =>
+    request<{ imported: number }>("/inspirations/import", {
+      method: "POST",
+      body: JSON.stringify({
+        items: items.map((item) => ({
+          content: item.content,
+          tags: item.tags ?? [],
+          source_type: item.source_type ?? "manual",
+        })),
+      }),
+    }),
+  updateInspiration: (
+    id: string,
+    payload: { content?: string; tags?: string[]; is_highlight?: boolean },
+  ) =>
+    request<Inspiration>(`/inspirations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
     }),
   inspirationToTopic: (id: string) =>
     request<{ topic: Topic; project: ContentProject }>(`/inspirations/${id}/to-topic`, {
@@ -153,9 +235,15 @@ export const api = {
     request<{ ok: boolean }>(`/inspirations/${id}`, { method: "DELETE" }),
 
   listTopics: () => request<Topic[]>("/topics"),
+  topicStats: () => request<TopicStats>("/topics/stats"),
   createTopic: (payload: Omit<Topic, "id" | "created_at" | "updated_at">) =>
     request<Topic>("/topics", {
       method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateTopic: (id: string, payload: Partial<Omit<Topic, "id" | "created_at" | "updated_at">>) =>
+    request<Topic>(`/topics/${id}`, {
+      method: "PATCH",
       body: JSON.stringify(payload),
     }),
   topicToProject: (id: string) =>

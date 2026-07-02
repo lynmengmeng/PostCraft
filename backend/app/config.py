@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
+    openai_image_model: str = "gpt-image-2"
+    openai_skip_proxy: bool = True
 
     skills_dir: Path = ROOT_DIR / "skills"
     vendor_skills_dir: Path = ROOT_DIR / "vendor" / "oh-my-writing-skill" / "skills"
@@ -79,3 +81,9 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def reload_settings() -> Settings:
+    """Clear cached settings after .env changes (e.g. dev hot-reload)."""
+    get_settings.cache_clear()
+    return get_settings()

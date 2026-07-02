@@ -20,7 +20,7 @@ class ContentPipeline:
         self.llm = llm
         self.skills = skills
 
-    async def generate_all(
+    async def generate_draft(
         self,
         project: ContentProject,
         style_profile: AuthorStyleProfile,
@@ -28,7 +28,7 @@ class ContentPipeline:
         on_delta: StreamCallback = None,
     ) -> dict[str, Any]:
         if on_delta:
-            await on_delta("正在撰写通用初稿…")
+            await on_delta("正在撰写观察型初稿…")
 
         draft = await self._run_markdown_skill(
             "general-writing",
@@ -49,32 +49,96 @@ class ContentPipeline:
             input_text=draft,
         )
 
-        platforms: dict[str, Any] = {}
-        for platform in ALL_PLATFORMS:
+        return {"draft": draft, "humanized": humanized}
+
+    async def generate_platforms(
+        self,
+        project: ContentProject,
+        style_profile: AuthorStyleProfile,
+        target_platforms: list[str],
+        on_delta: StreamCallback = None,
+        with_titles: bool = False,
+    ) -> dict[str, Any]:
+        humanized = (project.humanized or project.draft or "").strip()
+        if not humanized:
+            raise ValueError("请先生成并确认初稿，再生成平台内容")
+
+        targets = [p for p in target_platforms if p in PLATFORM_CONVERTERS]
+        if not targets:
+            targets = list(ALL_PLATFORMS)
+
+        patch: dict[str, Any] = {}
+        for platform in targets:
             if on_delta:
                 await on_delta(f"正在生成{platform}版本…")
-            platforms[platform] = await self._run_converter(
+            patch[f"platforms.{platform}"] = await self._run_converter(
                 PLATFORM_CONVERTERS[platform],
                 project,
                 style_profile,
                 humanized,
             )
 
-        if on_delta:
-            await on_delta("正在生成标题与封面提示…")
+        if with_titles or set(targets) == set(ALL_PLATFORMS):
+            if on_delta:
+                await on_delta("正在生成标题备选…")
+            patch["titles"] = await self._generate_titles(project, style_profile, humanized, count=12)
 
-        titles = await self._generate_titles(project, style_profile, humanized, count=12)
-        cover_assets = await self._generate_cover_prompts(project, style_profile, platforms)
+        return patch
 
+    async def generate_all(
+        self,
+        project: ContentProject,
+        style_profile: AuthorStyleProfile,
+        message: str = "",
+        on_delta: StreamCallback = None,
+    ) -> dict[str, Any]:
+        draft_patch = await self.generate_draft(project, style_profile, message, on_delta)
+        platform_patch = await self.generate_platforms(
+            project.model_copy(update={"draft": draft_patch["draft"], "humanized": draft_patch["humanized"]}),
+            style_profile,
+            ALL_PLATFORMS,
+            on_delta,
+            with_titles=True,
+        )
+        cover_assets = await self._generate_cover_prompts(
+            project,
+            style_profile,
+            {k.replace("platforms.", ""): v for k, v in platform_patch.items() if k.startswith("platforms.")},
+        )
         return {
-            "draft": draft,
-            "humanized": humanized,
-            "platforms.wechat": platforms["wechat"],
-            "platforms.xiaohongshu": platforms["xiaohongshu"],
-            "platforms.douyin": platforms["douyin"],
-            "titles": titles,
+            **draft_patch,
+            **platform_patch,
             "cover_assets": cover_assets,
         }
+
+    async def refine_draft(
+        self,
+        project: ContentProject,
+        style_profile: AuthorStyleProfile,
+        message: str,
+        on_delta: StreamCallback = None,
+    ) -> dict[str, Any]:
+        if on_delta:
+            await on_delta("正在理解修改意图…")
+
+        humanized = project.humanized or project.draft or project.inspiration
+        skill = self.skills.load("postcraft-orchestrator")
+        system = (
+            f"{skill}\n\n"
+            "根据用户指令修改观察型初稿 Markdown，只改初稿，不涉及各平台格式。"
+            "输出 JSON：{\"humanized\":\"完整修改后的 Markdown\"}"
+        )
+        user = (
+            build_chat_context_block(project)
+            + self._style_block(style_profile, ALL_PLATFORMS)
+            + f"\n\n选题: {project.inspiration[:500]}\n"
+            f"元信息: {json.dumps(project.topic_meta.model_dump(mode='json'), ensure_ascii=False)}\n\n"
+            f"当前初稿:\n{humanized}\n\n用户指令: {message}"
+        )
+        raw = await self.llm.complete(system, user)
+        payload = parse_json_from_text(raw)
+        updated = payload.get("humanized", humanized)
+        return {"humanized": updated, "draft": updated}
 
     async def patch_platforms(
         self,

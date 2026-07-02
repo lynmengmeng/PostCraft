@@ -27,7 +27,9 @@ from app.services.intent_parser import ParsedIntent, parse_intent
 from app.services.llm_client import LLMClient
 from app.services.mock_generator import (
     build_mock_cover_assets,
-    build_mock_generate_all,
+    build_mock_draft,
+    build_mock_platforms,
+    build_mock_refine_draft,
     build_mock_titles,
 )
 from app.services.pipeline import ContentPipeline
@@ -53,9 +55,12 @@ class ChatOrchestrator:
         selected_platform: str,
         style_profile: AuthorStyleProfile,
         on_delta: StreamCallback = None,
+        action: str | None = None,
+        target_platforms: list[str] | None = None,
     ) -> tuple[ContentProject, ContentPatch, ChatMessage]:
-        parsed = parse_intent(message, selected_platform)  # type: ignore[arg-type]
-        project.chat_history.append(ChatMessage(role="user", content=message))
+        parsed = self._resolve_intent(message, selected_platform, action, target_platforms)
+        user_content = message.strip() or self._default_user_label(parsed)
+        project.chat_history.append(ChatMessage(role="user", content=user_content))
 
         if parsed.intent == "rollback":
             restored = self._rollback(project)
@@ -81,6 +86,33 @@ class ChatOrchestrator:
         updated.chat_history.append(assistant)
         return updated, patch, assistant
 
+    def _resolve_intent(
+        self,
+        message: str,
+        selected_platform: str,
+        action: str | None,
+        target_platforms: list[str] | None,
+    ) -> ParsedIntent:
+        if action == "generate_draft":
+            return ParsedIntent("generate_draft", [], [])
+        if action == "generate_all":
+            return ParsedIntent("generate_all", ALL_PLATFORMS, [])
+        if action == "generate_platform":
+            platforms = target_platforms or [selected_platform]
+            return ParsedIntent("generate_platform", platforms, [])
+        if action == "refine_draft":
+            return ParsedIntent("refine_draft", [], [])
+        return parse_intent(message, selected_platform)  # type: ignore[arg-type]
+
+    def _default_user_label(self, parsed: ParsedIntent) -> str:
+        labels = {
+            "generate_draft": "撰写观察型初稿",
+            "generate_all": "一键生成三平台内容",
+            "generate_platform": "生成平台内容",
+            "refine_draft": "继续完善初稿",
+        }
+        return labels.get(parsed.intent, parsed.intent)
+
     async def _execute(
         self,
         project: ContentProject,
@@ -89,20 +121,84 @@ class ChatOrchestrator:
         style_profile: AuthorStyleProfile,
         on_delta: StreamCallback = None,
     ) -> ContentPatch:
-        if parsed.intent == "generate_all":
+        if parsed.intent == "generate_draft":
             if self.llm.status().configured:
-                patch_data = await self.pipeline.generate_all(
+                patch_data = await self.pipeline.generate_draft(
                     project, style_profile, message, on_delta=on_delta
                 )
-                patch_data = await self._attach_cover_images(patch_data)
                 return ContentPatch(
-                    intent="generate_all",
-                    target_platforms=["wechat", "xiaohongshu", "douyin"],
-                    summary="已通过 Skill 流水线生成三平台初稿。",
+                    intent="generate_draft",
+                    target_platforms=[],
+                    summary="已根据灵感生成观察型初稿，可在「初稿」区查看并继续对话打磨。满意后再生成各平台内容。",
                     patch=patch_data,
                     changes=self._changes_from_patch(patch_data),
                 )
-            return build_mock_generate_all(project)
+            return build_mock_draft(project)
+
+        if parsed.intent == "generate_all":
+            if not (project.humanized or project.draft):
+                return ContentPatch(
+                    intent="generate_all",
+                    target_platforms=ALL_PLATFORMS,
+                    summary="请先生成并确认初稿，再一键生成三平台内容。",
+                    patch={},
+                )
+            if self.llm.status().configured:
+                patch_data = await self.pipeline.generate_platforms(
+                    project,
+                    style_profile,
+                    ALL_PLATFORMS,
+                    on_delta=on_delta,
+                    with_titles=True,
+                )
+                patch_data = await self._attach_cover_images(
+                    {
+                        **patch_data,
+                        "cover_assets": await self.pipeline._generate_cover_prompts(
+                            project,
+                            style_profile,
+                            {
+                                k.replace("platforms.", ""): v
+                                for k, v in patch_data.items()
+                                if k.startswith("platforms.")
+                            },
+                        ),
+                    }
+                )
+                return ContentPatch(
+                    intent="generate_all",
+                    target_platforms=ALL_PLATFORMS,
+                    summary="已根据当前初稿生成公众号、小红书、抖音三平台内容。",
+                    patch=patch_data,
+                    changes=self._changes_from_patch(patch_data),
+                )
+            return build_mock_platforms(project, ALL_PLATFORMS, with_titles=True)
+
+        if parsed.intent == "generate_platform":
+            targets = [p for p in parsed.target_platforms if p in ALL_PLATFORMS] or ALL_PLATFORMS
+            if not (project.humanized or project.draft):
+                return ContentPatch(
+                    intent="generate_platform",
+                    target_platforms=targets,  # type: ignore[arg-type]
+                    summary="请先生成并确认初稿，再生成平台内容。",
+                    patch={},
+                )
+            if self.llm.status().configured:
+                patch_data = await self.pipeline.generate_platforms(
+                    project,
+                    style_profile,
+                    list(targets),
+                    on_delta=on_delta,
+                )
+                label = "、".join(targets)
+                return ContentPatch(
+                    intent="generate_platform",
+                    target_platforms=targets,  # type: ignore[arg-type]
+                    summary=f"已根据当前初稿生成 {label} 内容。",
+                    patch=patch_data,
+                    changes=self._changes_from_patch(patch_data),
+                )
+            return build_mock_platforms(project, list(targets))
 
         if parsed.intent == "generate_titles":
             if self.llm.status().configured:
@@ -151,43 +247,53 @@ class ChatOrchestrator:
                 patch={},
             )
 
-        if parsed.intent in {"humanize", "patch_platform"}:
+        if parsed.intent == "patch_platform":
             if self.llm.status().configured:
-                targets = (
-                    ALL_PLATFORMS
-                    if parsed.intent == "humanize"
-                    else list(parsed.target_platforms)
-                )
+                targets = list(parsed.target_platforms) or ALL_PLATFORMS
                 patch_data = await self.pipeline.patch_platforms(
                     project, style_profile, message, targets, on_delta=on_delta
                 )
                 return ContentPatch(
                     intent="patch_platform",
                     target_platforms=targets,  # type: ignore[arg-type]
-                    summary="已更新中间体并同步到目标平台。",
+                    summary="已更新初稿并同步到目标平台。",
                     patch=patch_data,
                     changes=self._changes_from_patch(patch_data),
                 )
-            patch = build_mock_generate_all(project)
-            patch.summary = "已按更温和、真实的观察语气刷新三平台内容。"
+            patch = build_mock_platforms(project, list(parsed.target_platforms) or ALL_PLATFORMS)
+            patch.summary = "已按指令刷新目标平台内容。"
             return patch
 
+        if parsed.intent == "refine_draft":
+            if self.llm.status().configured:
+                patch_data = await self.pipeline.refine_draft(
+                    project, style_profile, message, on_delta=on_delta
+                )
+                return ContentPatch(
+                    intent="refine_draft",
+                    target_platforms=[],
+                    summary="已更新初稿。满意后可生成各平台内容。",
+                    patch=patch_data,
+                    changes=self._changes_from_patch(patch_data),
+                )
+            return build_mock_refine_draft(project, message)
+
         if self.llm.status().configured:
-            patch_data = await self.pipeline.patch_platforms(
-                project, style_profile, message, [selected_platform], on_delta=on_delta
+            patch_data = await self.pipeline.refine_draft(
+                project, style_profile, message, on_delta=on_delta
             )
             return ContentPatch(
-                intent="patch_platform",
-                target_platforms=[selected_platform],  # type: ignore[arg-type]
-                summary="已更新内容。",
+                intent="refine_draft",
+                target_platforms=[],
+                summary="已更新初稿。",
                 patch=patch_data,
                 changes=self._changes_from_patch(patch_data),
             )
 
-        fallback = build_mock_generate_all(project)
+        fallback = build_mock_refine_draft(project, message)
         fallback.summary = (
-            "未识别到更具体的指令，已为你刷新三平台模板内容。"
-            "配置 DEEPSEEK_API_KEY 或 OPENAI_API_KEY 后可启用 AI 对话修改。"
+            "已更新初稿模板。"
+            "配置 DEEPSEEK_API_KEY 或 OPENAI_API_KEY 后可启用 AI 对话润色。"
         )
         return fallback
 

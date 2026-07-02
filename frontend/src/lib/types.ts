@@ -111,8 +111,25 @@ export interface Inspiration {
   id: string;
   content: string;
   source_type: "manual" | "screenshot" | "link";
+  source_url?: string;
+  image_url?: string;
+  is_highlight?: boolean;
   tags: string[];
   created_at: string;
+}
+
+export interface InspirationStats {
+  total: number;
+  by_source: Record<string, number>;
+  highlight_count: number;
+}
+
+export interface TopicStats {
+  total: number;
+  by_tone: Record<string, number>;
+  by_platform: Record<string, number>;
+  by_material_status: Record<string, number>;
+  top_tone: string | null;
 }
 
 export interface Topic {

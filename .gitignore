@@ -1,4 +1,5 @@
 data/
+stitch_data/
 backend/.venv/
 node_modules/
 frontend/.next/

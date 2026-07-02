@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import base64
+import logging
 from uuid import uuid4
 
-from openai import AsyncOpenAI
+from openai import APIStatusError
 
 from app.config import Settings
+from app.services.openai_transport import build_async_openai_client
+
+logger = logging.getLogger(__name__)
+
+# gpt-image-2 @ 1K, 3:4 — suitable for Xiaohongshu-style covers
+GPT_IMAGE_2_COVER_SIZE = "768x1024"
 
 
 class ImageGenerator:
@@ -13,8 +20,13 @@ class ImageGenerator:
         self.settings = settings
         self.output_dir = settings.images_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.image_model = settings.openai_image_model or "gpt-image-2"
         self.client = (
-            AsyncOpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
+            build_async_openai_client(
+                settings,
+                api_key=settings.openai_api_key,
+                base_url=settings.openai_base_url,
+            )
             if settings.openai_api_key
             else None
         )
@@ -27,19 +39,29 @@ class ImageGenerator:
         if not self.client:
             return self._placeholder(prompt)
 
-        response = await self.client.images.generate(
-            model="dall-e-3",
-            prompt=prompt[:900],
-            size="1024x1024",
-            quality="standard",
-            n=1,
-            response_format="b64_json",
-        )
-        image_b64 = response.data[0].b64_json
-        filename = f"{uuid4().hex}.png"
-        path = self.output_dir / filename
-        path.write_bytes(base64.b64decode(image_b64))
-        return f"/api/images/{filename}"
+        try:
+            response = await self.client.images.generate(
+                model=self.image_model,
+                prompt=prompt[:900],
+                size=GPT_IMAGE_2_COVER_SIZE,
+                quality="medium",
+                n=1,
+            )
+            image_b64 = response.data[0].b64_json
+            if not image_b64 and response.data[0].url:
+                return response.data[0].url
+            if not image_b64:
+                raise RuntimeError("OpenAI image response missing b64_json and url")
+            filename = f"{uuid4().hex}.png"
+            path = self.output_dir / filename
+            path.write_bytes(base64.b64decode(image_b64))
+            return f"/api/images/{filename}"
+        except APIStatusError as exc:
+            logger.warning("Cover image generation failed (%s), using placeholder", exc)
+            return self._placeholder(prompt)
+        except Exception as exc:
+            logger.warning("Cover image generation failed (%s), using placeholder", exc)
+            return self._placeholder(prompt)
 
     def _placeholder(self, prompt: str) -> str:
         from urllib.parse import quote

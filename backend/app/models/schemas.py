@@ -141,6 +141,9 @@ class Inspiration(BaseModel):
     id: str = Field(default_factory=new_id)
     content: str
     source_type: Literal["manual", "screenshot", "link"] = "manual"
+    source_url: str = ""
+    image_url: str = ""
+    is_highlight: bool = False
     tags: list[str] = Field(default_factory=list)
     topic_id: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -191,9 +194,17 @@ class ProjectUpdate(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str
+    message: str = ""
     selected_platform: Platform = "wechat"
     stream: bool = False
+    action: Literal[
+        "",
+        "generate_draft",
+        "generate_platform",
+        "generate_all",
+        "refine_draft",
+    ] | None = None
+    target_platforms: list[Platform] | None = None
 
 
 class ApplyTitleRequest(BaseModel):
@@ -210,7 +221,52 @@ class RiskWarningItem(BaseModel):
 class InspirationCreate(BaseModel):
     content: str
     source_type: Literal["manual", "screenshot", "link"] = "manual"
+    source_url: str = ""
+    image_url: str = ""
     tags: list[str] = Field(default_factory=list)
+
+
+class InspirationUpdate(BaseModel):
+    content: str | None = None
+    tags: list[str] | None = None
+    is_highlight: bool | None = None
+
+
+class InspirationFromLink(BaseModel):
+    url: str
+    content: str = ""
+    tags: list[str] = Field(default_factory=list)
+
+
+class InspirationImportPayload(BaseModel):
+    items: list[InspirationCreate]
+
+
+class InspirationStats(BaseModel):
+    total: int
+    by_source: dict[str, int]
+    highlight_count: int
+
+
+class TopicUpdate(BaseModel):
+    title: str | None = None
+    content_pillar: str | None = None
+    direction: str | None = None
+    tone: str | None = None
+    platforms: list[Platform] | None = None
+    audience: str | None = None
+    material_status: Literal["idea", "cases", "ready"] | None = None
+    priority: Literal["soon", "later"] | None = None
+    series: str | None = None
+    inspiration: str | None = None
+
+
+class TopicStats(BaseModel):
+    total: int
+    by_tone: dict[str, int]
+    by_platform: dict[str, int]
+    by_material_status: dict[str, int]
+    top_tone: str | None = None
 
 
 class TopicCreate(BaseModel):

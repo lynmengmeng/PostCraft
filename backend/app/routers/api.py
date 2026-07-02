@@ -18,12 +18,18 @@ from app.models.schemas import (
     ContentProject,
     Inspiration,
     InspirationCreate,
+    InspirationFromLink,
+    InspirationImportPayload,
+    InspirationStats,
+    InspirationUpdate,
     LLMStatus,
     ProjectCreate,
     ProjectUpdate,
     Topic,
     TopicCreate,
     TopicMeta,
+    TopicStats,
+    TopicUpdate,
     ChatMessage,
     RiskWarningItem,
     WechatContent,
@@ -200,6 +206,8 @@ async def _chat_once(
         payload.selected_platform,
         style_profile,
         on_delta=on_delta if payload.stream else None,
+        action=payload.action or None,
+        target_platforms=payload.target_platforms,
     )
     saved = project_repo.save_project(db, updated)
     return {
@@ -265,6 +273,8 @@ async def chat_with_project(
 
         import asyncio
 
+        from openai import APIStatusError, AuthenticationError
+
         task = asyncio.create_task(run_chat())
         seen = 0
         while not task.done():
@@ -275,7 +285,23 @@ async def chat_with_project(
         while seen < len(deltas):
             yield f"event: delta\ndata: {json.dumps({'text': deltas[seen]}, ensure_ascii=False)}\n\n"
             seen += 1
-        result = task.result()
+        try:
+            result = task.result()
+        except AuthenticationError:
+            message = (
+                "LLM API Key 无效或已过期，请检查 .env 中的 DEEPSEEK_API_KEY / OPENAI_API_KEY "
+                "是否与 LLM_PROVIDER 匹配，修改后重启后端。"
+            )
+            yield f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
+            return
+        except APIStatusError as exc:
+            message = f"LLM 请求失败（{exc.status_code}）：{exc}"
+            yield f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
+            return
+        except Exception as exc:
+            message = f"生成失败：{exc}"
+            yield f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
+            return
         yield f"event: done\ndata: {json.dumps(result, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -288,14 +314,141 @@ def list_inspirations(db: Session = Depends(get_db)) -> list[Inspiration]:
 
 @router.post("/inspirations", response_model=Inspiration)
 def create_inspiration(payload: InspirationCreate, db: Session = Depends(get_db)) -> Inspiration:
-    inspiration = Inspiration(content=payload.content, source_type=payload.source_type, tags=payload.tags)
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Content cannot be empty")
+    inspiration = Inspiration(
+        content=content,
+        source_type=payload.source_type,
+        source_url=payload.source_url.strip(),
+        image_url=payload.image_url.strip(),
+        tags=payload.tags,
+    )
     return inspiration_repo.create(db, inspiration)
+
+
+@router.post("/inspirations/upload-screenshot", response_model=Inspiration)
+async def upload_inspiration_screenshot(
+    file: UploadFile = File(...),
+    content: str = "",
+    tags: str = "",
+    db: Session = Depends(get_db),
+) -> Inspiration:
+    raw = await file.read()
+    content_type = file.content_type or "image/jpeg"
+    try:
+        image_url = ImageGenerator(get_settings()).save_upload(raw, content_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    note = content.strip()
+    if not note:
+        note = f"截图灵感：{file.filename or '未命名图片'}"
+
+    tag_list = [item.strip() for item in tags.replace("，", ",").split(",") if item.strip()]
+    inspiration = Inspiration(
+        content=note,
+        source_type="screenshot",
+        image_url=image_url,
+        tags=tag_list,
+    )
+    return inspiration_repo.create(db, inspiration)
+
+
+@router.post("/inspirations/from-link", response_model=Inspiration)
+def create_inspiration_from_link(
+    payload: InspirationFromLink,
+    db: Session = Depends(get_db),
+) -> Inspiration:
+    url = payload.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL cannot be empty")
+
+    content = payload.content.strip() or f"网页剪藏：{url}"
+    inspiration = Inspiration(
+        content=content,
+        source_type="link",
+        source_url=url,
+        tags=payload.tags,
+    )
+    return inspiration_repo.create(db, inspiration)
+
+
+@router.get("/inspirations/export")
+def export_inspirations(db: Session = Depends(get_db)) -> dict:
+    items = inspiration_repo.list_all(db)
+    return {
+        "version": 1,
+        "exported_at": datetime.utcnow().isoformat(),
+        "items": [item.model_dump(mode="json") for item in items],
+    }
+
+
+@router.post("/inspirations/import")
+def import_inspirations(
+    payload: InspirationImportPayload,
+    db: Session = Depends(get_db),
+) -> dict[str, int]:
+    created: list[Inspiration] = []
+    for item in payload.items:
+        content = item.content.strip()
+        if not content:
+            continue
+        created.append(
+            Inspiration(
+                content=content,
+                source_type=item.source_type,
+                source_url=item.source_url.strip(),
+                image_url=item.image_url.strip(),
+                tags=item.tags,
+            )
+        )
+    if created:
+        inspiration_repo.bulk_create(db, created)
+    return {"imported": len(created)}
+
+
+@router.get("/inspirations/stats", response_model=InspirationStats)
+def inspiration_stats(db: Session = Depends(get_db)) -> InspirationStats:
+    items = inspiration_repo.list_all(db)
+    by_source = {"manual": 0, "screenshot": 0, "link": 0}
+    highlight_count = 0
+    for item in items:
+        by_source[item.source_type] = by_source.get(item.source_type, 0) + 1
+        if item.is_highlight:
+            highlight_count += 1
+    return InspirationStats(total=len(items), by_source=by_source, highlight_count=highlight_count)
+
+
+@router.patch("/inspirations/{inspiration_id}", response_model=Inspiration)
+def update_inspiration(
+    inspiration_id: str,
+    payload: InspirationUpdate,
+    db: Session = Depends(get_db),
+) -> Inspiration:
+    inspiration = inspiration_repo.get(db, inspiration_id)
+    if not inspiration:
+        raise HTTPException(status_code=404, detail="Inspiration not found")
+
+    data = inspiration.model_dump(mode="python")
+    updates = payload.model_dump(exclude_unset=True)
+    if "content" in updates and updates["content"] is not None:
+        content = updates["content"].strip()
+        if not content:
+            raise HTTPException(status_code=400, detail="Content cannot be empty")
+        data["content"] = content
+    if "tags" in updates and updates["tags"] is not None:
+        data["tags"] = updates["tags"]
+    if "is_highlight" in updates and updates["is_highlight"] is not None:
+        data["is_highlight"] = updates["is_highlight"]
+
+    updated = Inspiration.model_validate(data)
+    return inspiration_repo.update(db, updated)
 
 
 @router.post("/inspirations/{inspiration_id}/to-topic")
 def inspiration_to_topic(inspiration_id: str, db: Session = Depends(get_db)) -> dict:
-    inspirations = inspiration_repo.list_all(db)
-    inspiration = next((item for item in inspirations if item.id == inspiration_id), None)
+    inspiration = inspiration_repo.get(db, inspiration_id)
     if not inspiration:
         raise HTTPException(status_code=404, detail="Inspiration not found")
 
@@ -304,6 +457,7 @@ def inspiration_to_topic(inspiration_id: str, db: Session = Depends(get_db)) -> 
         inspiration=inspiration.content,
         direction="社会观察",
         tone="温和共情",
+        content_pillar=inspiration.tags[0] if inspiration.tags else "",
     )
     saved_topic = topic_repo.create(db, topic)
     project = ContentProject(
@@ -337,10 +491,50 @@ def create_topic(payload: TopicCreate, db: Session = Depends(get_db)) -> Topic:
     return topic_repo.create(db, topic)
 
 
+@router.patch("/topics/{topic_id}", response_model=Topic)
+def update_topic(
+    topic_id: str,
+    payload: TopicUpdate,
+    db: Session = Depends(get_db),
+) -> Topic:
+    topic = topic_repo.get(db, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    data = topic.model_dump(mode="python")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        if value is not None:
+            data[key] = value
+    updated = Topic.model_validate(data)
+    return topic_repo.update(db, updated)
+
+
+@router.get("/topics/stats", response_model=TopicStats)
+def topic_stats(db: Session = Depends(get_db)) -> TopicStats:
+    items = topic_repo.list_all(db)
+    by_tone: dict[str, int] = {}
+    by_platform: dict[str, int] = {}
+    by_material_status: dict[str, int] = {"idea": 0, "cases": 0, "ready": 0}
+
+    for item in items:
+        by_tone[item.tone] = by_tone.get(item.tone, 0) + 1
+        by_material_status[item.material_status] = by_material_status.get(item.material_status, 0) + 1
+        for platform in item.platforms:
+            by_platform[platform] = by_platform.get(platform, 0) + 1
+
+    top_tone = max(by_tone, key=by_tone.get) if by_tone else None
+    return TopicStats(
+        total=len(items),
+        by_tone=by_tone,
+        by_platform=by_platform,
+        by_material_status=by_material_status,
+        top_tone=top_tone,
+    )
+
+
 @router.post("/topics/{topic_id}/to-project", response_model=ContentProject)
 def topic_to_project(topic_id: str, db: Session = Depends(get_db)) -> ContentProject:
-    topics = topic_repo.list_all(db)
-    topic = next((item for item in topics if item.id == topic_id), None)
+    topic = topic_repo.get(db, topic_id)
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
 

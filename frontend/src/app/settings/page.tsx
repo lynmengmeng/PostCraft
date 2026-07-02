@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { LoadError } from "@/components/ui/LoadError";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { api } from "@/lib/api";
@@ -27,13 +27,13 @@ export default function SettingsPage() {
   }
 
   if (loading) {
-    return <p className="text-sm text-stone-400">加载设置...</p>;
+    return <p className="p-8 text-sm text-on-surface-variant/50">加载设置...</p>;
   }
 
   if (error) {
     return (
-      <div className="space-y-4">
-        <h1 className="text-2xl font-semibold">设置</h1>
+      <div className="space-y-4 p-8">
+        <h1 className="font-headline text-2xl font-semibold">设置</h1>
         <LoadError message={error} onRetry={() => void reload()} />
       </div>
     );
@@ -44,22 +44,22 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-2xl space-y-6 p-8">
       <div>
-        <h1 className="text-2xl font-semibold">设置</h1>
-        <p className="text-sm text-stone-500">作者风格档案会影响内容生成的语气与禁用表达。</p>
+        <h1 className="font-headline text-2xl font-semibold">设置</h1>
+        <p className="text-sm text-on-surface-variant">作者风格档案会影响内容生成的语气与禁用表达。</p>
       </div>
-      <div className="rounded-2xl border border-stone-200 bg-white p-5 space-y-4">
+      <div className="space-y-4 rounded-2xl border border-outline-variant/30 bg-surface-container-lowest p-5">
         <label className="block text-sm">
-          <span className="text-stone-600">语气偏好</span>
+          <span className="text-on-surface-variant">语气偏好</span>
           <input
             value={profile.tone_preference}
             onChange={(e) => setProfile({ ...profile, tone_preference: e.target.value })}
-            className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2"
+            className="mt-1 w-full rounded-xl border border-outline-variant/30 px-3 py-2 outline-none focus:border-primary"
           />
         </label>
         <label className="block text-sm">
-          <span className="text-stone-600">禁用表达（逗号分隔）</span>
+          <span className="text-on-surface-variant">禁用表达（逗号分隔）</span>
           <input
             value={profile.banned_phrases.join("，")}
             onChange={(e) =>
@@ -68,11 +68,11 @@ export default function SettingsPage() {
                 banned_phrases: e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
               })
             }
-            className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2"
+            className="mt-1 w-full rounded-xl border border-outline-variant/30 px-3 py-2 outline-none focus:border-primary"
           />
         </label>
         <label className="block text-sm">
-          <span className="text-stone-600">个人素材片段（每行一条）</span>
+          <span className="text-on-surface-variant">个人素材片段（每行一条）</span>
           <textarea
             value={profile.personal_snippets.join("\n")}
             onChange={(e) =>
@@ -81,11 +81,11 @@ export default function SettingsPage() {
                 personal_snippets: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean),
               })
             }
-            className="mt-1 min-h-28 w-full rounded-xl border border-stone-200 p-3"
+            className="mt-1 min-h-28 w-full rounded-xl border border-outline-variant/30 p-3 outline-none focus:border-primary"
           />
         </label>
         <div className="space-y-3">
-          <span className="text-sm text-stone-600">各平台默认风格</span>
+          <span className="text-sm text-on-surface-variant">各平台默认风格</span>
           {(
             [
               ["wechat", "公众号（偏故事、段落完整）"],
@@ -94,7 +94,7 @@ export default function SettingsPage() {
             ] as const
           ).map(([key, label]) => (
             <label key={key} className="block text-sm">
-              <span className="text-stone-500">{label}</span>
+              <span className="text-on-surface-variant/70">{label}</span>
               <input
                 value={profile.platform_defaults[key] || ""}
                 onChange={(e) =>
@@ -107,18 +107,22 @@ export default function SettingsPage() {
                   })
                 }
                 placeholder="例如：开头用个人经历，少堆数据"
-                className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2"
+                className="mt-1 w-full rounded-xl border border-outline-variant/30 px-3 py-2 outline-none focus:border-primary"
               />
             </label>
           ))}
         </div>
-        <button onClick={save} className="rounded-xl bg-amber-700 px-4 py-2 text-sm text-white">
+        <button
+          type="button"
+          onClick={save}
+          className="rounded-xl bg-primary px-4 py-2 text-sm text-on-primary hover:opacity-90"
+        >
           保存风格档案
         </button>
-        {saved && <span className="ml-3 text-sm text-green-600">已保存</span>}
-        {saveError && <p className="text-sm text-red-600">{saveError}</p>}
+        {saved && <span className="ml-3 text-sm text-primary">已保存</span>}
+        {saveError && <p className="text-sm text-error">{saveError}</p>}
       </div>
-      <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-5 text-sm text-stone-600">
+      <div className="rounded-2xl border border-dashed border-outline-variant bg-surface-container-low p-5 text-sm text-on-surface-variant">
         <p className="font-medium">LLM 配置说明</p>
         <p className="mt-2">
           在后端读取根目录 <code>.env</code>，支持 <code>DEEPSEEK_API_KEY</code> 与{" "}

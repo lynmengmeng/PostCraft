@@ -68,6 +68,12 @@ class InspirationRepository:
         rows = db.query(InspirationRow).order_by(InspirationRow.created_at.desc()).all()
         return [Inspiration.model_validate(load_json(row.payload)) for row in rows]
 
+    def get(self, db: Session, inspiration_id: str) -> Inspiration | None:
+        row = db.get(InspirationRow, inspiration_id)
+        if not row:
+            return None
+        return Inspiration.model_validate(load_json(row.payload))
+
     def create(self, db: Session, inspiration: Inspiration) -> Inspiration:
         db.add(
             InspirationRow(
@@ -79,6 +85,14 @@ class InspirationRepository:
         db.commit()
         return inspiration
 
+    def update(self, db: Session, inspiration: Inspiration) -> Inspiration:
+        row = db.get(InspirationRow, inspiration.id)
+        if not row:
+            raise ValueError("Inspiration not found")
+        row.payload = dump_json(inspiration.model_dump(mode="json"))
+        db.commit()
+        return inspiration
+
     def delete(self, db: Session, inspiration_id: str) -> bool:
         row = db.get(InspirationRow, inspiration_id)
         if not row:
@@ -87,11 +101,29 @@ class InspirationRepository:
         db.commit()
         return True
 
+    def bulk_create(self, db: Session, inspirations: list[Inspiration]) -> list[Inspiration]:
+        for inspiration in inspirations:
+            db.add(
+                InspirationRow(
+                    id=inspiration.id,
+                    payload=dump_json(inspiration.model_dump(mode="json")),
+                    created_at=inspiration.created_at,
+                )
+            )
+        db.commit()
+        return inspirations
+
 
 class TopicRepository:
     def list_all(self, db: Session) -> list[Topic]:
         rows = db.query(TopicRow).order_by(TopicRow.updated_at.desc()).all()
         return [Topic.model_validate(load_json(row.payload)) for row in rows]
+
+    def get(self, db: Session, topic_id: str) -> Topic | None:
+        row = db.get(TopicRow, topic_id)
+        if not row:
+            return None
+        return Topic.model_validate(load_json(row.payload))
 
     def create(self, db: Session, topic: Topic) -> Topic:
         db.add(
@@ -102,6 +134,16 @@ class TopicRepository:
                 updated_at=topic.updated_at,
             )
         )
+        db.commit()
+        return topic
+
+    def update(self, db: Session, topic: Topic) -> Topic:
+        row = db.get(TopicRow, topic.id)
+        if not row:
+            raise ValueError("Topic not found")
+        topic.updated_at = datetime.utcnow()
+        row.payload = dump_json(topic.model_dump(mode="json"))
+        row.updated_at = topic.updated_at
         db.commit()
         return topic
 

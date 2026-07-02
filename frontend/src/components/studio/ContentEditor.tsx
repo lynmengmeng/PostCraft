@@ -5,13 +5,15 @@ import { api } from "@/lib/api";
 import { resolveImageUrl } from "@/lib/export";
 import type { ContentProject, Platform } from "@/lib/types";
 
+export type EditorTab = "draft" | Platform;
+
 interface ContentEditorProps {
   project: ContentProject;
-  platform: Platform;
+  editorTab: EditorTab;
   onUpdate: (project: ContentProject) => void;
 }
 
-export function ContentEditor({ project, platform, onUpdate }: ContentEditorProps) {
+export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorProps) {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -88,16 +90,34 @@ export function ContentEditor({ project, platform, onUpdate }: ContentEditorProp
     }
   }
 
+  function updateDraft(value: string) {
+    const next = structuredClone(project);
+    next.humanized = value;
+    next.draft = value;
+    scheduleSave(next);
+  }
+
   return (
     <div className="rounded-2xl bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-stone-500">当前平台内容（可编辑）</h3>
+        <h3 className="text-sm font-medium text-stone-500">
+          {editorTab === "draft" ? "观察型初稿（可编辑）" : "当前平台内容（可编辑）"}
+        </h3>
         <span className="text-xs text-stone-400">
           {saveState === "saving" ? "保存中…" : saveState === "saved" ? "已自动保存" : ""}
         </span>
       </div>
 
-      {platform === "wechat" && (
+      {editorTab === "draft" && (
+        <textarea
+          value={project.humanized || project.draft || ""}
+          onChange={(e) => updateDraft(e.target.value)}
+          className="min-h-72 w-full rounded-lg border border-stone-200 p-4 text-sm leading-7"
+          placeholder="初稿将显示在这里。可通过对话继续打磨，满意后再生成各平台内容。"
+        />
+      )}
+
+      {editorTab === "wechat" && (
         <div className="space-y-3">
           <input
             value={project.platforms.wechat.title}
@@ -120,7 +140,7 @@ export function ContentEditor({ project, platform, onUpdate }: ContentEditorProp
         </div>
       )}
 
-      {platform === "xiaohongshu" && (
+      {editorTab === "xiaohongshu" && (
         <div className="space-y-3">
           <div className="rounded-lg border border-dashed border-stone-200 bg-stone-50/80 p-3">
             <div className="flex items-center justify-between gap-2">
@@ -173,7 +193,7 @@ export function ContentEditor({ project, platform, onUpdate }: ContentEditorProp
         </div>
       )}
 
-      {platform === "douyin" && (
+      {editorTab === "douyin" && (
         <div className="space-y-3">
           <input
             value={project.platforms.douyin.hook}

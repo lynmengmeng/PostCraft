@@ -13,17 +13,20 @@ from app.models.schemas import (
 )
 
 
-def build_mock_generate_all(project: ContentProject) -> ContentPatch:
+def _mock_humanized(project: ContentProject) -> str:
     inspiration = project.inspiration or project.title
-    wechat_title = f"回村之后，我才看懂：{inspiration[:18]}"
-    xhs_title = f"关于{inspiration[:12]}，我想认真说几句"
-    hook = f"你有没有发现，{inspiration[:20]}？"
-
-    humanized = (
+    return (
         f"## 观察\n\n{inspiration}\n\n"
         "这不是危言耸听，而是我在回农村时反复看到的生活细节。"
         "很多风险不是突然降临，而是在日常里被一点点忽略。"
     )
+
+
+def _mock_platform_payload(project: ContentProject, humanized: str) -> dict:
+    inspiration = project.inspiration or project.title
+    wechat_title = f"回村之后，我才看懂：{inspiration[:18]}"
+    xhs_title = f"关于{inspiration[:12]}，我想认真说几句"
+    hook = f"你有没有发现，{inspiration[:20]}？"
 
     wechat = WechatContent(
         title=wechat_title,
@@ -106,28 +109,76 @@ def build_mock_generate_all(project: ContentProject) -> ContentPatch:
         TitleCandidate(text="温和提醒：别忽视这些日常风险", style="警醒型"),
     ]
 
-    return ContentPatch(
-        intent="generate_all",
-        target_platforms=["wechat", "xiaohongshu", "douyin"],
-        summary="已生成公众号、小红书、抖音三平台初稿，请在预览区查看。",
-        patch={
-            "humanized": humanized,
-            "draft": humanized,
-            "platforms.wechat": wechat.model_dump(mode="json"),
-            "platforms.xiaohongshu": xhs.model_dump(mode="json"),
-            "platforms.douyin": douyin.model_dump(mode="json"),
-            "titles": [item.model_dump(mode="json") for item in titles],
-            "cover_assets": [
-                CoverAsset(
-                    platform="all",
-                    headline=wechat_title[:20],
-                    subheadline="真实观察 · 温和提醒",
-                    prompt="纪实风格，暖色乡村傍晚，真实生活场景，不要明显 AI 感",
-                ).model_dump(mode="json")
-            ],
+    return {
+        "humanized": humanized,
+        "draft": humanized,
+        "platforms": {
+            "wechat": wechat,
+            "xiaohongshu": xhs,
+            "douyin": douyin,
         },
-        preview_hints=["已更新公众号、小红书、抖音预览"],
+        "titles": titles,
+        "wechat_title": wechat_title,
+    }
+
+
+def build_mock_draft(project: ContentProject) -> ContentPatch:
+    humanized = _mock_humanized(project)
+    return ContentPatch(
+        intent="generate_draft",
+        target_platforms=[],
+        summary="已根据灵感生成观察型初稿。可在「初稿」区查看，继续对话打磨后再生成各平台内容。",
+        patch={"humanized": humanized, "draft": humanized},
     )
+
+
+def build_mock_platforms(
+    project: ContentProject,
+    targets: list[str],
+    with_titles: bool = False,
+) -> ContentPatch:
+    humanized = project.humanized or project.draft or _mock_humanized(project)
+    payload = _mock_platform_payload(project, humanized)
+    patch: dict = {}
+    for platform in targets:
+        patch[f"platforms.{platform}"] = payload["platforms"][platform].model_dump(mode="json")  # type: ignore[index]
+    if with_titles or len(targets) >= 3:
+        patch["titles"] = [item.model_dump(mode="json") for item in payload["titles"]]  # type: ignore[index]
+        patch["cover_assets"] = [
+            CoverAsset(
+                platform="all",
+                headline=str(payload["wechat_title"])[:20],
+                subheadline="真实观察 · 温和提醒",
+                prompt="纪实风格，暖色乡村傍晚，真实生活场景，不要明显 AI 感",
+            ).model_dump(mode="json")
+        ]
+    label = "、".join(targets)
+    return ContentPatch(
+        intent="generate_platform" if len(targets) == 1 else "generate_all",
+        target_platforms=targets,  # type: ignore[arg-type]
+        summary=f"已根据初稿生成 {label} 内容（模板模式）。",
+        patch=patch,
+    )
+
+
+def build_mock_refine_draft(project: ContentProject, message: str) -> ContentPatch:
+    base = project.humanized or project.draft or _mock_humanized(project)
+    suffix = f"\n\n（已按「{message[:24]}」方向微调语气。）" if message.strip() else ""
+    humanized = base + suffix
+    return ContentPatch(
+        intent="refine_draft",
+        target_platforms=[],
+        summary="已更新初稿。满意后可生成各平台内容。",
+        patch={"humanized": humanized, "draft": humanized},
+    )
+
+
+def build_mock_generate_all(project: ContentProject) -> ContentPatch:
+    draft = build_mock_draft(project)
+    merged = project.model_copy(
+        update={"humanized": draft.patch["humanized"], "draft": draft.patch["draft"]}
+    )
+    return build_mock_platforms(merged, ["wechat", "xiaohongshu", "douyin"], with_titles=True)
 
 
 def build_mock_titles(project: ContentProject, count: int = 10) -> ContentPatch:

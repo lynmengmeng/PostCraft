@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Manrope, Playfair_Display, Plus_Jakarta_Sans } from "next/font/google";
 import { AppShell } from "@/components/layout/AppShell";
+import { siteConfig } from "@/lib/site";
 import "./globals.css";
 
 const jakarta = Plus_Jakarta_Sans({
@@ -22,8 +23,12 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: "PostCraft · 生活有稿",
-  description: "从灵感到发布的个人内容创作工作台",
+  title: {
+    default: siteConfig.name,
+    template: `%s | ${siteConfig.shortName}`,
+  },
+  description: siteConfig.description,
+  metadataBase: new URL(siteConfig.url),
 };
 
 export default function RootLayout({

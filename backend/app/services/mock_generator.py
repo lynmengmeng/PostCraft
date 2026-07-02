@@ -155,7 +155,7 @@ def build_mock_platforms(
     patch: dict = {}
     for platform in targets:
         patch[f"platforms.{platform}"] = payload["platforms"][platform].model_dump(mode="json")  # type: ignore[index]
-    if with_titles or len(targets) >= 3:
+    if with_titles or len(targets) >= 3 or not project.titles:
         patch["titles"] = [item.model_dump(mode="json") for item in payload["titles"]]  # type: ignore[index]
         patch["cover_assets"] = [
             CoverAsset(

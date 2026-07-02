@@ -7,7 +7,7 @@ import { BackendStatusBanner } from "@/components/layout/BackendStatusBanner";
 import { Icon } from "@/components/ui/Icon";
 
 const navItems = [
-  { href: "/", label: "工作台", icon: "dashboard" },
+  { href: "/workspace", label: "工作台", icon: "dashboard" },
   { href: "/inspirations", label: "灵感库", icon: "lightbulb" },
   { href: "/topics", label: "选题库", icon: "topic" },
   { href: "/drafts", label: "草稿箱", icon: "description" },
@@ -15,7 +15,7 @@ const navItems = [
 ];
 
 const searchPlaceholders: Record<string, string> = {
-  "/": "搜索工作台...",
+  "/workspace": "搜索工作台...",
   "/inspirations": "搜索灵感库...",
   "/topics": "搜索选题、支柱或基调...",
   "/drafts": "搜索草稿...",
@@ -43,7 +43,7 @@ export function useShell() {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const isStudio = pathname.startsWith("/create/");
+  const isPublicPage = pathname === "/" || pathname.startsWith("/create/");
   const [zenMode, setZenMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -58,11 +58,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setSearchQuery("");
   }, [pathname]);
 
-  if (isStudio) {
+  if (isPublicPage) {
     return <>{children}</>;
   }
 
-  const showInspector = pathname === "/";
+  const showInspector = pathname === "/workspace";
 
   return (
     <ShellContext.Provider value={{ zenMode, setZenMode, searchQuery, setSearchQuery }}>
@@ -74,7 +74,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           }`}
         >
           <div className="p-6">
-            <Link href="/" className="font-headline text-xl font-bold text-primary">
+            <Link href="/workspace" className="font-headline text-xl font-bold text-primary">
               PostCraft
             </Link>
             <p className="mt-0.5 text-[13px] font-semibold tracking-wide text-on-surface-variant/70">
@@ -105,7 +105,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="border-t border-outline-variant/30 p-4">
             <button
               type="button"
-              onClick={() => router.push("/")}
+              onClick={() => router.push("/workspace")}
               className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-[13px] font-semibold tracking-wide text-on-primary transition-opacity hover:opacity-90"
             >
               <Icon name="add" className="text-[18px]" />
@@ -169,7 +169,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <BackendStatusBanner compact />
             <button
               type="button"
-              onClick={() => router.push("/")}
+              onClick={() => router.push("/workspace")}
               className="rounded-xl bg-primary px-5 py-2 text-sm font-bold text-on-primary transition-opacity hover:opacity-90"
             >
               开始创作

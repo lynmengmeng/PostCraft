@@ -90,7 +90,7 @@ class ContentPipeline:
                 humanized,
             )
 
-        if with_titles or set(targets) == set(ALL_PLATFORMS):
+        if with_titles or set(targets) == set(ALL_PLATFORMS) or not project.titles:
             if on_delta:
                 await on_delta("正在生成标题备选…")
             patch["titles"] = await self._generate_titles(project, style_profile, humanized, count=12)

@@ -61,6 +61,7 @@ export default function CreateStudioPage() {
   const [streamingLines, setStreamingLines] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copiedTitleKey, setCopiedTitleKey] = useState<string | null>(null);
   const [copyMode, setCopyMode] = useState<"rich" | "markdown">("rich");
   const [viewMode, setViewMode] = useState<StudioViewMode>("split");
   const [pendingAttachments, setPendingAttachments] = useState<string[]>([]);
@@ -168,8 +169,54 @@ export default function CreateStudioPage() {
 
   async function applyTitle(index: number) {
     if (!project) return;
-    const updated = await api.applyTitle(project.id, index, previewPlatform);
+    const platform =
+      editorTab === "draft" ? previewPlatform : (editorTab as Platform);
+    const updated = await api.applyTitle(project.id, index, platform);
     setProject(updated);
+  }
+
+  async function copyTextToClipboard(text: string, feedbackKey?: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    if (feedbackKey) {
+      setCopiedTitleKey(feedbackKey);
+      setTimeout(() => setCopiedTitleKey(null), 1500);
+    } else {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
+  }
+
+  async function copyTitleAt(index: number) {
+    if (!project) return;
+    const title = project.titles[index]?.text;
+    if (!title) return;
+    await copyTextToClipboard(title, `title-${index}`);
+  }
+
+  async function copyAllTitles() {
+    if (!project || project.titles.length === 0) return;
+    const text = project.titles
+      .map((t, i) => `${i + 1}. [${t.style}] ${t.text}`)
+      .join("\n");
+    await copyTextToClipboard(text, "all-titles");
+  }
+
+  async function copyCurrentWechatTitle() {
+    if (!project) return;
+    const title = project.platforms.wechat.title.trim();
+    if (!title) return;
+    await copyTextToClipboard(title, "current-title");
   }
 
   async function restoreVersion(versionId: string) {
@@ -186,25 +233,29 @@ export default function CreateStudioPage() {
 
   async function copyCurrentPlatform() {
     if (!project) return;
-    if (editorTab === "wechat" || (editorTab !== "draft" && previewPlatform === "wechat")) {
-      if (copyMode === "rich") {
-        await copyWechatRichHtml(
-          project.platforms.wechat,
-          project.cover_assets,
-          resolveImageUrl,
-        );
+    try {
+      if (editorTab === "wechat" || (editorTab !== "draft" && previewPlatform === "wechat")) {
+        if (copyMode === "rich") {
+          await copyWechatRichHtml(
+            project.platforms.wechat,
+            project.cover_assets,
+            resolveImageUrl,
+          );
+        } else {
+          await navigator.clipboard.writeText(getPlatformCopyText(project, "wechat"));
+        }
       } else {
-        await navigator.clipboard.writeText(getPlatformCopyText(project, "wechat"));
+        const text =
+          editorTab === "draft"
+            ? project.humanized || project.draft || project.inspiration
+            : getPlatformCopyText(project, previewPlatform);
+        await navigator.clipboard.writeText(text);
       }
-    } else {
-      const text =
-        editorTab === "draft"
-          ? project.humanized || project.draft || project.inspiration
-          : getPlatformCopyText(project, previewPlatform);
-      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setError("复制失败，请检查浏览器剪贴板权限");
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
   }
 
   const wechatChecks =
@@ -226,7 +277,7 @@ export default function CreateStudioPage() {
         <div className="flex items-center gap-4">
           <button
             type="button"
-            onClick={() => router.push("/")}
+            onClick={() => router.push("/workspace")}
             className="flex items-center gap-1 text-sm text-on-surface-variant hover:text-primary"
           >
             <Icon name="arrow_back" className="text-[18px]" />
@@ -262,14 +313,25 @@ export default function CreateStudioPage() {
           </div>
           <div className="flex items-center gap-1">
             {(editorTab === "wechat" || previewPlatform === "wechat") && editorTab !== "draft" && (
-              <select
-                value={copyMode}
-                onChange={(e) => setCopyMode(e.target.value as "rich" | "markdown")}
-                className="rounded-lg border border-outline-variant px-2 py-1.5 text-xs text-on-surface-variant"
-              >
-                <option value="rich">富文本</option>
-                <option value="markdown">Markdown</option>
-              </select>
+              <>
+                <button
+                  type="button"
+                  onClick={copyCurrentWechatTitle}
+                  disabled={!project.platforms.wechat.title.trim()}
+                  className="flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-1.5 text-sm text-on-surface-variant hover:bg-surface-container-low disabled:opacity-40"
+                >
+                  <Icon name="title" className="text-[16px]" />
+                  {copiedTitleKey === "current-title" ? "标题已复制" : "复制标题"}
+                </button>
+                <select
+                  value={copyMode}
+                  onChange={(e) => setCopyMode(e.target.value as "rich" | "markdown")}
+                  className="rounded-lg border border-outline-variant px-2 py-1.5 text-xs text-on-surface-variant"
+                >
+                  <option value="rich">富文本</option>
+                  <option value="markdown">Markdown</option>
+                </select>
+              </>
             )}
             <button
               type="button"
@@ -555,33 +617,69 @@ export default function CreateStudioPage() {
             )}
 
             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low/50 p-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-medium text-on-surface-variant">标题备选</h3>
-                <button
-                  type="button"
-                  onClick={runFactCheck}
-                  className="text-xs text-primary underline"
-                >
-                  检查敏感表述
-                </button>
+                <div className="flex items-center gap-3">
+                  {project.titles.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={copyAllTitles}
+                      className="text-xs text-primary underline"
+                    >
+                      {copiedTitleKey === "all-titles" ? "已复制全部" : "复制全部"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => sendChat("给我 10 个标题")}
+                    disabled={sending}
+                    className="text-xs text-primary underline disabled:opacity-50"
+                  >
+                    {project.titles.length > 0 ? "重新生成" : "生成标题"}
+                  </button>
+                </div>
               </div>
+              <p className="mt-2 text-xs text-on-surface-variant/70">
+                点击标题应用到当前平台；点右侧复制图标可单独复制到剪贴板（公众号标题需粘贴到后台标题栏）。
+              </p>
+              {project.titles.length === 0 ? (
+                <p className="mt-3 text-sm leading-relaxed text-on-surface-variant">
+                  尚未生成标题备选。点击「生成标题」，或在 AI 协作中发送「给我 10 个标题」。
+                </p>
+              ) : (
               <div className="mt-3 space-y-2">
                 {project.titles.map((title, index) => (
-                  <button
+                  <div
                     key={`${title.text}-${index}`}
-                    type="button"
-                    onClick={() => applyTitle(index)}
-                    className={`block w-full rounded-lg px-3 py-2 text-left text-sm ${
+                    className={`flex items-stretch gap-1 rounded-lg ${
                       title.applied
                         ? "bg-primary/10 ring-1 ring-primary/30"
-                        : "bg-surface-container-low hover:bg-surface-container"
+                        : "bg-surface-container-low"
                     }`}
                   >
-                    <span className="text-xs text-on-surface-variant">{title.style}</span>
-                    <div>{title.text}</div>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => applyTitle(index)}
+                      className="min-w-0 flex-1 rounded-lg px-3 py-2 text-left text-sm hover:bg-surface-container"
+                    >
+                      <span className="text-xs text-on-surface-variant">{title.style}</span>
+                      <div className="break-words">{title.text}</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => copyTitleAt(index)}
+                      title="复制此标题"
+                      className="flex shrink-0 items-center px-3 text-on-surface-variant hover:text-primary"
+                    >
+                      <Icon
+                        name={copiedTitleKey === `title-${index}` ? "check" : "content_copy"}
+                        className="text-[18px]"
+                      />
+                    </button>
+                  </div>
                 ))}
               </div>
+              )}
             </div>
 
             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low/50 p-4">

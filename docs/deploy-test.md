@@ -41,11 +41,14 @@ sudo mkdir -p /opt/postcraft
 sudo chown "$USER:$USER" /opt/postcraft
 git clone <PostCraft-repo-url> /opt/postcraft   # 或 git pull
 
-# 2. 后端
-bash /opt/postcraft/deploy/install-backend.sh
+# 2. 后端（脚本会自动识别仓库路径，如 /opt/PostCraft）
+bash deploy/install-backend.sh
+
+# 若路径非标准，可显式指定：
+# POSTCRAFT_ROOT=/opt/PostCraft bash deploy/install-backend.sh
 
 # 3. 前端（含 NEXT_PUBLIC_BASE_PATH=/postcraft）
-bash /opt/postcraft/deploy/install-frontend.sh
+bash deploy/install-frontend.sh
 
 # 4. nginx（运维：追加 location 到 test.studyx.ai server 块）
 # 见 deploy/nginx-postcraft.conf.example

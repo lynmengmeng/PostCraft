@@ -2,8 +2,16 @@
 # PostCraft 测试环境前端安装脚本（在测试 EC2 上执行）
 set -euo pipefail
 
-ROOT="${POSTCRAFT_ROOT:-/opt/postcraft}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "${POSTCRAFT_ROOT:-$SCRIPT_DIR/..}" && pwd)"
 PORT="${POSTCRAFT_WEB_PORT:-3002}"
+
+if [[ ! -d "$ROOT/frontend" ]]; then
+  echo "ERROR: frontend not found at $ROOT/frontend"
+  echo "       Set POSTCRAFT_ROOT to your repo path, e.g.:"
+  echo "       POSTCRAFT_ROOT=/opt/PostCraft bash $0"
+  exit 1
+fi
 
 echo "==> PostCraft frontend install (root: $ROOT, port: $PORT)"
 

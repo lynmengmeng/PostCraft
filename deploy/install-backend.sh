@@ -2,8 +2,16 @@
 # PostCraft 测试环境后端安装脚本（在测试 EC2 上执行）
 set -euo pipefail
 
-ROOT="${POSTCRAFT_ROOT:-/opt/postcraft}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "${POSTCRAFT_ROOT:-$SCRIPT_DIR/..}" && pwd)"
 STUDYX_KEYS="${STUDYX_API_KEYS:-/opt/studyx-agent-backend/config/api_keys.local.json}"
+
+if [[ ! -d "$ROOT/backend" ]]; then
+  echo "ERROR: backend not found at $ROOT/backend"
+  echo "       Set POSTCRAFT_ROOT to your repo path, e.g.:"
+  echo "       POSTCRAFT_ROOT=/opt/PostCraft bash $0"
+  exit 1
+fi
 
 echo "==> PostCraft backend install (root: $ROOT)"
 
@@ -23,7 +31,7 @@ if [[ ! -f "$ROOT/.env" ]]; then
 fi
 
 if [[ -f "$STUDYX_KEYS" ]]; then
-  if [[ ! -f "$ROOT/config/api_keys.local.json" ]]; then
+  if [[ ! -f "$ROOT/config/api_keys.local.json" && ! -L "$ROOT/config/api_keys.local.json" ]]; then
     ln -sf "$STUDYX_KEYS" "$ROOT/config/api_keys.local.json"
     echo "Linked api_keys.local.json -> $STUDYX_KEYS"
   fi
@@ -32,7 +40,8 @@ else
   echo "      Set API_KEYS_FILE in $ROOT/.env or create config/api_keys.local.json"
 fi
 
-sudo cp "$ROOT/deploy/postcraft.service" /etc/systemd/system/postcraft.service
+sed "s|@POSTCRAFT_ROOT@|$ROOT|g" "$ROOT/deploy/postcraft.service" \
+  | sudo tee /etc/systemd/system/postcraft.service >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable postcraft
 sudo systemctl restart postcraft

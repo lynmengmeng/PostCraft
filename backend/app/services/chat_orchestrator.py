@@ -40,6 +40,8 @@ from app.services.mock_generator import (
 from app.services.pipeline import ContentPipeline
 from app.services.repository import apply_patch
 from app.services.skill_loader import SkillLoader
+from app.services.wechat_html import finalize_wechat_content
+from app.services.wechat_assets import next_asset_index
 from app.skill_pipelines import ALL_PLATFORMS
 
 StreamCallback = Callable[[str], Awaitable[None]] | None
@@ -62,9 +64,19 @@ class ChatOrchestrator:
         on_delta: StreamCallback = None,
         action: str | None = None,
         target_platforms: list[str] | None = None,
+        attachment_urls: list[str] | None = None,
     ) -> tuple[ContentProject, ContentPatch, ChatMessage]:
-        parsed = self._resolve_intent(message, selected_platform, action, target_platforms, project)
+        parsed = self._resolve_intent(
+            message,
+            selected_platform,
+            action,
+            target_platforms,
+            project,
+            attachment_urls=attachment_urls,
+        )
         user_content = message.strip() or self._default_user_label(parsed)
+        if attachment_urls:
+            user_content += f"\n[附件: {', '.join(attachment_urls)}]"
         project.chat_history.append(ChatMessage(role="user", content=user_content))
 
         if parsed.intent == "rollback":
@@ -79,7 +91,14 @@ class ChatOrchestrator:
             restored.chat_history.append(assistant)
             return restored, patch, assistant
 
-        patch = await self._execute(project, message, parsed, style_profile, on_delta)
+        patch = await self._execute(
+            project,
+            message,
+            parsed,
+            style_profile,
+            on_delta,
+            attachment_urls=attachment_urls,
+        )
         self._snapshot(project, patch.summary)
         updated = apply_patch(project, patch)
         updated.updated_at = datetime.utcnow()
@@ -98,6 +117,7 @@ class ChatOrchestrator:
         action: str | None,
         target_platforms: list[str] | None,
         project: ContentProject,
+        attachment_urls: list[str] | None = None,
     ) -> ParsedIntent:
         if action == "generate_draft":
             return ParsedIntent("generate_draft", [], [])
@@ -108,9 +128,14 @@ class ChatOrchestrator:
             return ParsedIntent("generate_platform", platforms, [])
         if action == "refine_draft":
             return ParsedIntent("refine_draft", [], [])
+        if action == "layout_images":
+            return ParsedIntent("layout_images", ["wechat"], [])
         has_draft = bool(project.humanized or project.draft)
         parsed = parse_intent(message, selected_platform, has_draft=has_draft)  # type: ignore[arg-type]
-        return self._coerce_draft_refine_intent(message, parsed, has_draft, action)
+        parsed = self._coerce_draft_refine_intent(message, parsed, has_draft, action)
+        if attachment_urls and parsed.intent == "refine_draft":
+            return ParsedIntent("layout_images", ["wechat"], [])
+        return parsed
 
     def _coerce_draft_refine_intent(
         self,
@@ -142,6 +167,7 @@ class ChatOrchestrator:
             "generate_all": "一键生成三平台内容",
             "generate_platform": "生成平台内容",
             "refine_draft": "继续完善初稿",
+            "layout_images": "调整公众号配图布局",
         }
         return labels.get(parsed.intent, parsed.intent)
 
@@ -152,6 +178,7 @@ class ChatOrchestrator:
         parsed: ParsedIntent,
         style_profile: AuthorStyleProfile,
         on_delta: StreamCallback = None,
+        attachment_urls: list[str] | None = None,
     ) -> ContentPatch:
         if parsed.intent == "generate_draft":
             if self.llm.status().configured:
@@ -215,6 +242,11 @@ class ChatOrchestrator:
                     patch_data = await self._ensure_cover_assets(
                         project, patch_data, style_profile
                     )
+                elif "wechat" in targets:
+                    patch_data = self._finalize_wechat_in_patch(
+                        patch_data,
+                        [a.model_dump(mode="json") for a in project.cover_assets],
+                    )
                 label = "、".join(targets)
                 summary = f"已根据当前初稿生成 {label} 内容。"
                 if not project.cover_assets and patch_data.get("cover_assets"):
@@ -255,6 +287,12 @@ class ChatOrchestrator:
                 assets = await self.pipeline._generate_cover_prompts(project, style_profile, platforms)
                 patch_data = {"cover_assets": assets}
                 patch_data = await self._attach_cover_images(patch_data)
+                wechat = project.platforms.get("wechat")
+                if wechat and wechat.body:
+                    patch_data["platforms.wechat"] = finalize_wechat_content(
+                        wechat.model_dump(mode="json"),
+                        patch_data.get("cover_assets") or [],
+                    )
                 return ContentPatch(
                     intent="cover_assets",
                     target_platforms=["all"],
@@ -265,6 +303,42 @@ class ChatOrchestrator:
             patch_data = await self._attach_cover_images(patch.patch)
             patch.patch = patch_data
             return patch
+
+        if parsed.intent == "layout_images":
+            if not project.platforms.get("wechat") or not project.platforms["wechat"].body:
+                return ContentPatch(
+                    intent="layout_images",
+                    target_platforms=["wechat"],
+                    summary="请先生成公众号正文，再调整配图位置。",
+                    patch={},
+                )
+            if self.llm.status().configured:
+                patch_data = await self.pipeline.layout_wechat_images(
+                    project,
+                    style_profile,
+                    message,
+                    attachment_urls=attachment_urls,
+                    on_delta=on_delta,
+                )
+                patch_data = self._merge_uploaded_attachments(patch_data, attachment_urls or [])
+                patch_data = self._finalize_wechat_in_patch(
+                    patch_data,
+                    patch_data.get("cover_assets")
+                    or [a.model_dump(mode="json") for a in project.cover_assets],
+                )
+                return ContentPatch(
+                    intent="layout_images",
+                    target_platforms=["wechat"],
+                    summary="已根据你的素材与指令调整公众号配图位置。",
+                    patch=patch_data,
+                    changes=self._changes_from_patch(patch_data),
+                )
+            return ContentPatch(
+                intent="layout_images",
+                target_platforms=["wechat"],
+                summary="配置 LLM 后可自动调整配图布局；你也可在正文中手动写 ![图注](__IMAGE_0__)。",
+                patch={},
+            )
 
         if parsed.intent == "fact_check":
             warnings = self._build_warnings(project, style_profile)
@@ -286,6 +360,11 @@ class ChatOrchestrator:
                 patch_data = await self.pipeline.patch_platforms(
                     project, style_profile, message, targets, on_delta=on_delta
                 )
+                if "wechat" in targets and project.cover_assets:
+                    patch_data = self._finalize_wechat_in_patch(
+                        patch_data,
+                        [a.model_dump(mode="json") for a in project.cover_assets],
+                    )
                 return ContentPatch(
                     intent="patch_platform",
                     target_platforms=targets,  # type: ignore[arg-type]
@@ -356,7 +435,7 @@ class ChatOrchestrator:
         platforms = self._platform_dict_from_patch(project, patch_data)
         if not platforms:
             return patch_data
-        return await self._attach_cover_images(
+        result = await self._attach_cover_images(
             {
                 **patch_data,
                 "cover_assets": await self.pipeline._generate_cover_prompts(
@@ -366,6 +445,21 @@ class ChatOrchestrator:
                 ),
             }
         )
+        return self._finalize_wechat_in_patch(result)
+
+    def _finalize_wechat_in_patch(
+        self,
+        patch_data: dict[str, Any],
+        existing_assets: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        if "platforms.wechat" not in patch_data or not isinstance(patch_data["platforms.wechat"], dict):
+            return patch_data
+        assets = patch_data.get("cover_assets") or existing_assets or []
+        patch_data["platforms.wechat"] = finalize_wechat_content(
+            patch_data["platforms.wechat"],
+            assets,
+        )
+        return patch_data
 
     async def _attach_cover_images(self, patch_data: dict[str, Any]) -> dict[str, Any]:
         assets = patch_data.get("cover_assets") or []
@@ -375,6 +469,14 @@ class ChatOrchestrator:
         updated_assets = []
         image_url = ""
         for asset in assets:
+            if asset.get("image_url") and asset.get("source") == "upload":
+                updated_assets.append(asset)
+                image_url = asset.get("image_url") or image_url
+                continue
+            if asset.get("image_url"):
+                updated_assets.append(asset)
+                image_url = asset.get("image_url") or image_url
+                continue
             prompt = asset.get("prompt", "纪实风格封面")
             image_url = await self.images.generate(prompt)
             asset = {**asset, "image_url": image_url}
@@ -386,6 +488,38 @@ class ChatOrchestrator:
                 patch_data["platforms.xiaohongshu"]["cover_image"] = image_url
             else:
                 patch_data["platforms.xiaohongshu.cover_image"] = image_url
+        return patch_data
+
+    def _merge_uploaded_attachments(
+        self,
+        patch_data: dict[str, Any],
+        attachment_urls: list[str],
+    ) -> dict[str, Any]:
+        if not attachment_urls:
+            return patch_data
+
+        assets = list(patch_data.get("cover_assets") or [])
+        existing_urls = {a.get("image_url") for a in assets if isinstance(a, dict)}
+        next_index = next_asset_index(assets)
+
+        for url in attachment_urls:
+            if url in existing_urls:
+                continue
+            assets.append(
+                {
+                    "platform": "wechat",
+                    "headline": f"用户素材{next_index + 1}",
+                    "subheadline": "用户上传",
+                    "prompt": "用户上传素材",
+                    "image_url": url,
+                    "caption": "用户素材",
+                    "asset_index": next_index,
+                    "source": "upload",
+                }
+            )
+            next_index += 1
+
+        patch_data["cover_assets"] = assets
         return patch_data
 
     def _changes_from_patch(self, patch_data: dict[str, Any]) -> list[ChangeRecord]:
@@ -412,9 +546,12 @@ class ChatOrchestrator:
         return [RiskWarningItem.model_validate(item) for item in raw]
 
     def _snapshot(self, project: ContentProject, label: str) -> None:
+        data = project.model_dump(mode="json")
+        # 快照中不嵌套 versions，避免每次对话指数级膨胀
+        data["versions"] = []
         snapshot = ProjectVersion(
             label=label[:80],
-            snapshot=project.model_dump(mode="json"),
+            snapshot=data,
         )
         project.versions.append(snapshot)
         if len(project.versions) > 20:

@@ -25,11 +25,30 @@ class DouyinScene(BaseModel):
     subtitle: str = ""
 
 
+class WechatStyleTheme(BaseModel):
+    accent: str = "#455548"
+    mood: str = "warm"
+    heading_style: str = "border_left"
+    quote_bg: str = "#faf8f5"
+    quote_border: str = "#d4a574"
+    text_color: str = "#3f3f3f"
+    heading_color: str = "#1a1c1b"
+
+
+class WechatImagePlacement(BaseModel):
+    after_paragraph: int = 0
+    asset_index: int = 0
+    caption: str = ""
+    prompt: str = ""
+
+
 class WechatContent(BaseModel):
     title: str = ""
     summary: str = ""
     body: str = ""
     formatted_html: str = ""
+    style_theme: WechatStyleTheme = Field(default_factory=WechatStyleTheme)
+    image_placements: list[WechatImagePlacement] = Field(default_factory=list)
 
 
 class XiaohongshuContent(BaseModel):
@@ -67,6 +86,10 @@ class CoverAsset(BaseModel):
     subheadline: str = ""
     prompt: str = ""
     image_url: str = ""
+    after_paragraph: int = -1
+    caption: str = ""
+    asset_index: int = 0
+    source: Literal["generated", "upload"] = "generated"
 
 
 class ChatMessage(BaseModel):
@@ -190,6 +213,7 @@ class ProjectUpdate(BaseModel):
     draft: str | None = None
     humanized: str | None = None
     platforms: dict[str, Any] | None = None
+    cover_assets: list[CoverAsset] | None = None
     publish_records: list[PublishRecord] | None = None
 
 
@@ -203,8 +227,10 @@ class ChatRequest(BaseModel):
         "generate_platform",
         "generate_all",
         "refine_draft",
+        "layout_images",
     ] | None = None
     target_platforms: list[Platform] | None = None
+    attachment_urls: list[str] = Field(default_factory=list)
 
 
 class ApplyTitleRequest(BaseModel):

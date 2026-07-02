@@ -10,8 +10,15 @@ import {
 import { Icon } from "@/components/ui/Icon";
 import { ResizableColumns } from "@/components/ui/ResizableColumns";
 import { api, platformLabels, type ChatOptions } from "@/lib/api";
-import { exportAllPlatforms, resolveImageUrl } from "@/lib/export";
+import {
+  downloadImage,
+  exportAllPlatforms,
+  exportWechatHtml,
+  resolveImageUrl,
+  validateWechatContent,
+} from "@/lib/export";
 import type { ContentProject, Platform } from "@/lib/types";
+import { copyWechatRichHtml, getImagePlacementLabel } from "@/lib/wechat-html";
 
 const platformIcons: Record<Platform, string> = {
   wechat: "chat_bubble",
@@ -27,6 +34,7 @@ const quickCommands = [
   "加个人经历，少堆数据",
   "给我 10 个标题",
   "检查敏感表述",
+  "调整配图位置",
   "撤销上一版",
 ];
 
@@ -53,7 +61,10 @@ export default function CreateStudioPage() {
   const [streamingLines, setStreamingLines] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copyMode, setCopyMode] = useState<"rich" | "markdown">("rich");
   const [viewMode, setViewMode] = useState<StudioViewMode>("split");
+  const [pendingAttachments, setPendingAttachments] = useState<string[]>([]);
+  const chatFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api
@@ -76,29 +87,57 @@ export default function CreateStudioPage() {
 
   async function sendChat(text: string, current = project, options?: ChatOptions) {
     if (!current || sending) return;
-    if (!text.trim() && !options?.action) return;
+    const attachmentUrls = options?.attachment_urls ?? pendingAttachments;
+    if (!text.trim() && !options?.action && attachmentUrls.length === 0) return;
+    const outgoing =
+      text.trim() ||
+      (attachmentUrls.length > 0 ? "请处理我上传的配图素材，插入公众号合适位置" : "");
     setSending(true);
     setError("");
     setStreamingLines([]);
     try {
       const result = await api.chat(
         current.id,
-        text,
+        outgoing,
         previewPlatform,
         true,
         (delta) => {
           setStreamingLines((prev) => [...prev, delta]);
         },
-        options,
+        {
+          ...options,
+          ...(attachmentUrls.length ? { attachment_urls: attachmentUrls } : {}),
+        },
       );
       setProject(result.project);
       setMessage("");
+      setPendingAttachments([]);
       setStreamingLines([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "发送失败");
       setStreamingLines([]);
     } finally {
       setSending(false);
+    }
+  }
+
+  async function handleChatAssetUpload(file: File) {
+    if (!project) return;
+    setError("");
+    try {
+      const saved = await api.uploadAsset(project.id, file, { insertPlaceholder: false });
+      setProject(saved);
+      const latest = saved.cover_assets[saved.cover_assets.length - 1];
+      if (latest?.image_url) {
+        setPendingAttachments((prev) => [...prev, latest.image_url!]);
+      }
+      if (!message.trim()) {
+        setMessage("请把这张素材插入公众号合适的位置，并写上图注");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "上传失败");
+    } finally {
+      if (chatFileRef.current) chatFileRef.current.value = "";
     }
   }
 
@@ -147,14 +186,31 @@ export default function CreateStudioPage() {
 
   async function copyCurrentPlatform() {
     if (!project) return;
-    const text =
-      editorTab === "draft"
-        ? project.humanized || project.draft || project.inspiration
-        : getPlatformCopyText(project, previewPlatform);
-    await navigator.clipboard.writeText(text);
+    if (editorTab === "wechat" || (editorTab !== "draft" && previewPlatform === "wechat")) {
+      if (copyMode === "rich") {
+        await copyWechatRichHtml(
+          project.platforms.wechat,
+          project.cover_assets,
+          resolveImageUrl,
+        );
+      } else {
+        await navigator.clipboard.writeText(getPlatformCopyText(project, "wechat"));
+      }
+    } else {
+      const text =
+        editorTab === "draft"
+          ? project.humanized || project.draft || project.inspiration
+          : getPlatformCopyText(project, previewPlatform);
+      await navigator.clipboard.writeText(text);
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
+
+  const wechatChecks =
+    project && editorTab === "wechat"
+      ? validateWechatContent(project.platforms.wechat, project.cover_assets)
+      : [];
 
   if (loading) {
     return <div className="p-8 text-on-surface-variant">加载创作室...</div>;
@@ -204,14 +260,40 @@ export default function CreateStudioPage() {
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            onClick={copyCurrentPlatform}
-            className="flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-1.5 text-sm text-on-surface-variant hover:bg-surface-container-low"
-          >
-            <Icon name="content_copy" className="text-[16px]" />
-            {copied ? "已复制" : "复制"}
-          </button>
+          <div className="flex items-center gap-1">
+            {(editorTab === "wechat" || previewPlatform === "wechat") && editorTab !== "draft" && (
+              <select
+                value={copyMode}
+                onChange={(e) => setCopyMode(e.target.value as "rich" | "markdown")}
+                className="rounded-lg border border-outline-variant px-2 py-1.5 text-xs text-on-surface-variant"
+              >
+                <option value="rich">富文本</option>
+                <option value="markdown">Markdown</option>
+              </select>
+            )}
+            <button
+              type="button"
+              onClick={copyCurrentPlatform}
+              className="flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-1.5 text-sm text-on-surface-variant hover:bg-surface-container-low"
+            >
+              <Icon name="content_copy" className="text-[16px]" />
+              {copied
+                ? "已复制"
+                : editorTab === "wechat" && copyMode === "rich"
+                  ? "复制富文本"
+                  : "复制"}
+            </button>
+          </div>
+          {editorTab === "wechat" && (
+            <button
+              type="button"
+              onClick={() => exportWechatHtml(project)}
+              className="flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-1.5 text-sm text-on-surface-variant hover:bg-surface-container-low"
+            >
+              <Icon name="code" className="text-[16px]" />
+              导出 HTML
+            </button>
+          )}
           <button
             type="button"
             onClick={() => exportAllPlatforms(project)}
@@ -324,6 +406,25 @@ export default function CreateStudioPage() {
                 </button>
               ))}
             </div>
+            {pendingAttachments.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {pendingAttachments.map((url) => (
+                  <div
+                    key={url}
+                    className="relative h-14 w-14 overflow-hidden rounded-lg border border-outline-variant/30"
+                  >
+                    <img
+                      src={resolveImageUrl(url)}
+                      alt="待发送素材"
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                ))}
+                <span className="self-center text-xs text-on-surface-variant">
+                  已选 {pendingAttachments.length} 张素材，发送后 AI 将处理配图位置
+                </span>
+              </div>
+            )}
             <div className="relative">
               <textarea
                 value={message}
@@ -334,17 +435,38 @@ export default function CreateStudioPage() {
                     sendChat(message);
                   }
                 }}
-                placeholder="继续打磨初稿，或提出修改意见..."
-                className="h-20 w-full resize-none rounded-xl border border-outline-variant/20 bg-surface-container-low p-3 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                placeholder="继续打磨初稿、调整配图位置，或上传素材后说明插入位置…"
+                className="h-20 w-full resize-none rounded-xl border border-outline-variant/20 bg-surface-container-low p-3 pr-20 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
               />
-              <button
-                type="button"
-                onClick={() => sendChat(message)}
-                disabled={sending}
-                className="absolute bottom-2 right-2 text-primary disabled:opacity-50"
-              >
-                <Icon name="send" className="text-[20px]" />
-              </button>
+              <div className="absolute bottom-2 right-2 flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => chatFileRef.current?.click()}
+                  disabled={sending}
+                  className="text-on-surface-variant hover:text-primary disabled:opacity-50"
+                  title="上传配图素材"
+                >
+                  <Icon name="image" className="text-[20px]" />
+                </button>
+                <input
+                  ref={chatFileRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void handleChatAssetUpload(file);
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => sendChat(message)}
+                  disabled={sending}
+                  className="text-primary disabled:opacity-50"
+                >
+                  <Icon name="send" className="text-[20px]" />
+                </button>
+              </div>
             </div>
             {error && <p className="text-xs text-error">{error}</p>}
           </div>
@@ -464,31 +586,98 @@ export default function CreateStudioPage() {
 
             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low/50 p-4">
               <h3 className="text-sm font-medium text-on-surface-variant">封面与配图</h3>
+              <p className="mt-2 text-xs leading-relaxed text-on-surface-variant/70">
+                发布清单：① 复制富文本粘贴正文 → ② 下载封面/配图上传至公众号 → ③ 填写标题与摘要 → ④ 保存草稿或发表
+              </p>
               {project.cover_assets.length === 0 ? (
                 <p className="mt-3 text-sm leading-relaxed text-on-surface-variant">
                   生成任意平台内容后会自动生成封面。也可在对话中发送「生成封面配图」。
                 </p>
               ) : (
-                project.cover_assets.map((asset) => (
-                  <div key={asset.id} className="mt-3 rounded-lg bg-surface-container-low p-3 text-sm">
-                    {asset.image_url ? (
-                      <img
-                        src={resolveImageUrl(asset.image_url)}
-                        alt={asset.headline}
-                        className="mb-2 aspect-[3/4] w-full rounded-lg object-cover"
-                      />
-                    ) : (
-                      <div className="mb-2 flex aspect-[3/4] w-full items-center justify-center rounded-lg bg-surface-container text-xs text-on-surface-variant">
-                        配图生成中或失败，可在对话中发送「生成封面配图」重试
+                project.cover_assets.map((asset, index) => {
+                  const placement = project.platforms.wechat.image_placements?.find(
+                    (p) => p.asset_index === (asset.asset_index ?? index),
+                  );
+                  const placementLabel = placement
+                    ? getImagePlacementLabel(placement, asset)
+                    : asset.after_paragraph != null && asset.after_paragraph >= 0
+                      ? getImagePlacementLabel(
+                          { after_paragraph: asset.after_paragraph, asset_index: index, caption: asset.caption || "" },
+                          asset,
+                        )
+                      : index === 0
+                        ? "封面候选"
+                        : "正文配图";
+                  return (
+                    <div key={asset.id} className="mt-3 rounded-lg bg-surface-container-low p-3 text-sm">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                          {placementLabel}
+                        </span>
+                        {asset.source === "upload" && (
+                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700">
+                            已上传
+                          </span>
+                        )}
+                        {asset.image_url && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              downloadImage(
+                                asset.image_url!,
+                                `${asset.headline || "配图"}-${index + 1}.jpg`,
+                              )
+                            }
+                            className="text-xs text-primary underline"
+                          >
+                            下载
+                          </button>
+                        )}
                       </div>
-                    )}
-                    <div className="font-medium">{asset.headline}</div>
-                    <div className="text-on-surface-variant">{asset.subheadline}</div>
-                    <div className="mt-2 text-xs text-on-surface-variant/60">{asset.prompt}</div>
-                  </div>
-                ))
+                      {asset.image_url ? (
+                        <img
+                          src={resolveImageUrl(asset.image_url)}
+                          alt={asset.headline}
+                          className="mb-2 aspect-[3/4] w-full rounded-lg object-cover"
+                        />
+                      ) : (
+                        <div className="mb-2 flex aspect-[3/4] w-full items-center justify-center rounded-lg bg-surface-container text-xs text-on-surface-variant">
+                          配图生成中或失败，可在对话中发送「生成封面配图」重试
+                        </div>
+                      )}
+                      <div className="font-medium">{asset.headline}</div>
+                      <div className="text-on-surface-variant">
+                        {asset.caption || asset.subheadline}
+                      </div>
+                      <div className="mt-2 text-xs text-on-surface-variant/60">{asset.prompt}</div>
+                    </div>
+                  );
+                })
               )}
             </div>
+
+            {editorTab === "wechat" && wechatChecks.length > 0 && (
+              <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low/50 p-4">
+                <h3 className="text-sm font-medium text-on-surface-variant">发布前校验</h3>
+                <ul className="mt-3 space-y-2">
+                  {wechatChecks.map((check) => (
+                    <li
+                      key={check.message}
+                      className={`text-sm ${
+                        check.level === "warn"
+                          ? "text-amber-800"
+                          : check.level === "error"
+                            ? "text-error"
+                            : "text-on-surface-variant"
+                      }`}
+                    >
+                      {check.level === "warn" ? "⚠ " : check.level === "info" ? "· " : ""}
+                      {check.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {(project.versions || []).length > 0 && (
               <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low/50 p-4">

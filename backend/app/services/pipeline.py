@@ -4,11 +4,23 @@ import json
 from typing import Any, Callable, Awaitable
 
 from app.skill_pipelines import ALL_PLATFORMS, PLATFORM_CONVERTERS
-from app.models.schemas import AuthorStyleProfile, ContentProject, CoverAsset, TitleCandidate
+from app.models.schemas import (
+    AuthorStyleProfile,
+    ContentProject,
+    CoverAsset,
+    TitleCandidate,
+    WechatContent,
+    WechatImagePlacement,
+)
 from app.services.chat_context import build_chat_context_block
 from app.services.llm_client import LLMClient
 from app.services.repository import parse_json_from_text
 from app.services.skill_loader import SkillLoader
+from app.services.wechat_html import build_formatted_html, finalize_wechat_content
+from app.services.wechat_assets import (
+    build_materials_context_block,
+    sync_image_placements,
+)
 
 StreamCallback = Callable[[str], Awaitable[None]] | None
 
@@ -196,6 +208,53 @@ class ContentPipeline:
 
         return patch
 
+    async def layout_wechat_images(
+        self,
+        project: ContentProject,
+        style_profile: AuthorStyleProfile,
+        message: str,
+        attachment_urls: list[str] | None = None,
+        on_delta: StreamCallback = None,
+    ) -> dict[str, Any]:
+        if on_delta:
+            await on_delta("正在调整公众号配图布局…")
+
+        wechat = project.platforms.get("wechat")
+        if not wechat or not isinstance(wechat, WechatContent):
+            raise ValueError("请先生成公众号内容")
+
+        assets_data = [a.model_dump(mode="json") for a in project.cover_assets]
+        system = (
+            "你是公众号排版编辑。根据用户指令调整正文中的配图位置与图注。\n"
+            "规则：\n"
+            "- 保留已有 ![图注](__IMAGE_N__) 占位符，N 与素材 asset_index 一致\n"
+            "- 用户上传的素材（source=upload）必须保留，只调整位置和图注\n"
+            "- 可新增占位符引用附件 URL 对应的 __IMAGE_N__\n"
+            "- 输出 JSON："
+            '{"body":"完整 Markdown 正文","image_placements":[{"after_paragraph":1,"asset_index":0,"caption":"","prompt":""}]}'
+        )
+        user = (
+            build_materials_context_block(attachment_urls or [], assets_data)
+            + build_chat_context_block(project)
+            + self._style_block(style_profile, ["wechat"])
+            + f"\n\n当前标题: {wechat.title}\n当前摘要: {wechat.summary}\n\n"
+            f"当前正文:\n{wechat.body}\n\n"
+            f"已有素材:\n{json.dumps(assets_data, ensure_ascii=False)}\n\n"
+            f"用户指令: {message or '请优化配图在正文中的位置与图注'}"
+        )
+        raw = await self.llm.complete(system, user)
+        payload = parse_json_from_text(raw)
+        wechat_data = wechat.model_dump(mode="json")
+        wechat_data["body"] = payload.get("body", wechat.body)
+        if payload.get("image_placements"):
+            wechat_data["image_placements"] = payload["image_placements"]
+        else:
+            wechat_data["image_placements"] = sync_image_placements(
+                wechat_data["body"],
+                assets_data,
+            )
+        return {"platforms.wechat": self._normalize_wechat_payload(wechat_data)}
+
     async def _run_markdown_skill(
         self,
         skill_name: str,
@@ -235,7 +294,12 @@ class ContentPipeline:
         elif skill_name == "xiaohongshu-converter":
             schema_hint = '{"title":"","body":"","tags":[]}'
         else:
-            schema_hint = '{"title":"","summary":"","body":""}'
+            schema_hint = (
+                '{"title":"","summary":"","body":"","style_theme":{"accent":"","mood":"",'
+                '"heading_style":"border_left|underline|plain","quote_bg":"","quote_border":"",'
+                '"text_color":"","heading_color":""},'
+                '"image_placements":[{"after_paragraph":0,"asset_index":0,"caption":"","prompt":""}]}'
+            )
 
         platform_key = skill_name.replace("-converter", "")
         system = (
@@ -246,7 +310,10 @@ class ContentPipeline:
         )
         user = f"中间体内容:\n{humanized}"
         raw = await self.llm.complete(system, user)
-        return parse_json_from_text(raw)
+        payload = parse_json_from_text(raw)
+        if skill_name == "wechat-converter":
+            payload = self._normalize_wechat_payload(payload)
+        return payload
 
     async def _generate_titles(
         self,
@@ -279,14 +346,83 @@ class ContentPipeline:
         style_profile: AuthorStyleProfile,
         platforms: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        wechat_title = platforms.get("wechat", {}).get("title", project.title)
-        asset = CoverAsset(
-            platform="all",
-            headline=str(wechat_title)[:20],
-            subheadline="真实观察 · 温和提醒",
-            prompt="纪实风格，暖色乡村傍晚，真实生活场景，不要明显 AI 感",
-        )
-        return [asset.model_dump(mode="json")]
+        wechat = platforms.get("wechat", {})
+        wechat_title = wechat.get("title", project.title)
+        placements = wechat.get("image_placements") or []
+        assets: list[dict[str, Any]] = []
+
+        if placements:
+            for placement in placements:
+                if isinstance(placement, dict):
+                    p = WechatImagePlacement.model_validate(placement)
+                else:
+                    p = placement
+                prompt = p.prompt or "纪实风格，暖色生活场景，真实自然，不要明显 AI 感"
+                asset = CoverAsset(
+                    platform="wechat",
+                    headline=str(wechat_title)[:20],
+                    subheadline=p.caption or "正文配图",
+                    prompt=prompt,
+                    after_paragraph=p.after_paragraph,
+                    caption=p.caption,
+                    asset_index=p.asset_index,
+                )
+                assets.append(asset.model_dump(mode="json"))
+        else:
+            asset = CoverAsset(
+                platform="all",
+                headline=str(wechat_title)[:20],
+                subheadline="真实观察 · 温和提醒",
+                prompt="纪实风格，暖色乡村傍晚，真实生活场景，不要明显 AI 感",
+                after_paragraph=-1,
+                asset_index=0,
+            )
+            assets.append(asset.model_dump(mode="json"))
+
+        return assets
+
+    def _normalize_wechat_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        style_theme = payload.get("style_theme") or {}
+        if not isinstance(style_theme, dict):
+            style_theme = {}
+        placements_raw = payload.get("image_placements") or []
+        placements: list[dict[str, Any]] = []
+        for index, item in enumerate(placements_raw[:4]):
+            if isinstance(item, dict):
+                item.setdefault("asset_index", index)
+                placements.append(item)
+
+        body = payload.get("body", "")
+        if placements and "__IMAGE_" not in body:
+            body = self._inject_image_placeholders(body, placements)
+            payload["body"] = body
+
+        payload["style_theme"] = style_theme
+        payload["image_placements"] = placements
+        payload["formatted_html"] = build_formatted_html(payload, [])
+        return payload
+
+    def _inject_image_placeholders(self, body: str, placements: list[dict[str, Any]]) -> str:
+        paragraphs = [p for p in body.split("\n\n") if p.strip()]
+        insertions: dict[int, list[str]] = {}
+        for placement in sorted(placements, key=lambda p: p.get("after_paragraph", 0)):
+            pos = int(placement.get("after_paragraph", 0))
+            index = int(placement.get("asset_index", 0))
+            caption = placement.get("caption") or f"配图{index + 1}"
+            block = f"![{caption}](__IMAGE_{index}__)"
+            insertions.setdefault(pos, []).append(block)
+
+        result: list[str] = []
+        for idx, block in enumerate(paragraphs):
+            result.append(block)
+            if (idx + 1) in insertions:
+                result.extend(insertions.pop(idx + 1))
+
+        for pos in sorted(insertions.keys()):
+            if pos >= len(paragraphs):
+                result.extend(insertions[pos])
+
+        return "\n\n".join(result)
 
     def _formatting_rules(self, skill_name: str) -> str:
         if skill_name == "wechat-converter":
@@ -296,7 +432,10 @@ class ContentPipeline:
                 "- 段落之间必须空一行，每段 2-4 句为宜\n"
                 "- 并列要点用「1. 2. 3.」有序列表，每项单独一行\n"
                 "- 引用/金句用 > 开头\n"
-                "- 避免整篇一大段文字，保持公众号阅读节奏"
+                "- 避免整篇一大段文字，保持公众号阅读节奏\n"
+                "- 在正文中用 ![图注](__IMAGE_N__) 标记配图位置（N 从 0 起）\n"
+                "- 根据文章调性输出 style_theme（accent/quote_bg 等 HEX 色值）\n"
+                "- 输出 image_placements：2-3 处正文配图，含 after_paragraph、caption、prompt"
             )
         if skill_name == "xiaohongshu-converter":
             return (

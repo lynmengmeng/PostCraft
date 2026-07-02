@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from copy import deepcopy
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -35,8 +35,15 @@ from app.models.schemas import (
     WechatContent,
     XiaohongshuContent,
     DouyinContent,
+    CoverAsset,
     new_id,
 )
+from app.services.wechat_assets import (
+    insert_placeholder_in_body,
+    next_asset_index,
+    sync_image_placements,
+)
+from app.services.wechat_html import finalize_wechat_content
 from app.services.chat_orchestrator import ChatOrchestrator
 from app.services.fact_check import scan_project
 from app.services.image_generator import ImageGenerator
@@ -110,8 +117,10 @@ def update_project(
                 project.platforms["douyin"] = DouyinContent.model_validate(value)
     for key, value in data.items():
         setattr(project, key, value)
+    if "cover_assets" in data and data["cover_assets"] is not None:
+        project.cover_assets = [CoverAsset.model_validate(item) for item in data["cover_assets"]]
     project.updated_at = datetime.utcnow()
-    content_fields = {"platforms", "draft", "humanized"}
+    content_fields = {"platforms", "draft", "humanized", "cover_assets"}
     if content_fields.intersection(data.keys()):
         project = _scan_and_attach_warnings(project, db)
     return project_repo.save_project(db, project)
@@ -208,6 +217,7 @@ async def _chat_once(
         on_delta=on_delta if payload.stream else None,
         action=payload.action or None,
         target_platforms=payload.target_platforms,
+        attachment_urls=payload.attachment_urls or None,
     )
     saved = project_repo.save_project(db, updated)
     return {
@@ -223,6 +233,17 @@ def get_image(filename: str):
     path = settings.images_dir / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="Image not found")
+    media_types = {
+        ".svg": "image/svg+xml",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }
+    media_type = media_types.get(path.suffix.lower())
+    if media_type:
+        return FileResponse(path, media_type=media_type)
     return FileResponse(path)
 
 
@@ -246,6 +267,59 @@ async def upload_cover(
     project.platforms["xiaohongshu"].cover_image = image_url
     if project.cover_assets:
         project.cover_assets[0].image_url = image_url
+    project.updated_at = datetime.utcnow()
+    project = _scan_and_attach_warnings(project, db)
+    return project_repo.save_project(db, project)
+
+
+@router.post("/projects/{project_id}/upload-asset", response_model=ContentProject)
+async def upload_asset(
+    project_id: str,
+    file: UploadFile = File(...),
+    caption: str = Form(""),
+    insert_placeholder: bool = Form(True),
+    db: Session = Depends(get_db),
+) -> ContentProject:
+    project = project_repo.get_project(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    content = await file.read()
+    content_type = file.content_type or "image/jpeg"
+    try:
+        image_url = ImageGenerator(get_settings()).save_upload(content, content_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    assets = list(project.cover_assets)
+    asset_index = next_asset_index([a.model_dump(mode="json") for a in assets])
+    label = caption.strip() or f"配图{asset_index + 1}"
+    asset = CoverAsset(
+        platform="wechat",
+        headline=label[:20],
+        subheadline=label,
+        prompt="用户上传素材",
+        image_url=image_url,
+        caption=label,
+        asset_index=asset_index,
+        source="upload",
+    )
+    assets.append(asset)
+
+    wechat = project.platforms["wechat"]
+    wechat_data = wechat.model_dump(mode="json")
+    if insert_placeholder and wechat.body.strip():
+        wechat_data["body"] = insert_placeholder_in_body(wechat.body, asset_index, label)
+    elif insert_placeholder:
+        wechat_data["body"] = insert_placeholder_in_body("", asset_index, label)
+
+    wechat_data["image_placements"] = sync_image_placements(
+        wechat_data.get("body", ""),
+        [a.model_dump(mode="json") for a in assets],
+    )
+    wechat_data = finalize_wechat_content(wechat_data, [a.model_dump(mode="json") for a in assets])
+    project.platforms["wechat"] = WechatContent.model_validate(wechat_data)
+    project.cover_assets = assets
     project.updated_at = datetime.utcnow()
     project = _scan_and_attach_warnings(project, db)
     return project_repo.save_project(db, project)

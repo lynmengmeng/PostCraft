@@ -9,11 +9,30 @@ export interface DouyinScene {
   subtitle: string;
 }
 
+export interface WechatStyleTheme {
+  accent: string;
+  mood: string;
+  heading_style: "border_left" | "underline" | "plain";
+  quote_bg: string;
+  quote_border: string;
+  text_color: string;
+  heading_color: string;
+}
+
+export interface WechatImagePlacement {
+  after_paragraph: number;
+  asset_index: number;
+  caption: string;
+  prompt?: string;
+}
+
 export interface WechatContent {
   title: string;
   summary: string;
   body: string;
   formatted_html?: string;
+  style_theme?: Partial<WechatStyleTheme>;
+  image_placements?: WechatImagePlacement[];
 }
 
 export interface XiaohongshuContent {
@@ -51,6 +70,10 @@ export interface CoverAsset {
   subheadline: string;
   prompt: string;
   image_url?: string;
+  after_paragraph?: number;
+  caption?: string;
+  asset_index?: number;
+  source?: "generated" | "upload";
 }
 
 export interface ChatMessage {

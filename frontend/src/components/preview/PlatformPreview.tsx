@@ -1,29 +1,65 @@
 import type { ContentProject, Platform } from "@/lib/types";
 import { platformLabels } from "@/lib/api";
 import { resolveImageUrl } from "@/lib/export";
-import { renderArticleMarkdown, renderXhsBody } from "@/lib/markdown";
+import { renderXhsBody } from "@/lib/markdown";
+import {
+  getWechatPlainText,
+  normalizeStyleTheme,
+  renderWechatBodyInlineHtml,
+  renderWechatCopyHtml,
+} from "@/lib/wechat-html";
 
-export function WechatPreview({ content }: { content: ContentProject["platforms"]["wechat"] }) {
+export function WechatPreview({
+  content,
+  coverAssets = [],
+}: {
+  content: ContentProject["platforms"]["wechat"];
+  coverAssets?: ContentProject["cover_assets"];
+}) {
+  const theme = normalizeStyleTheme(content.style_theme);
+  const accent = theme.accent;
+  const summaryStyle = {
+    borderLeftColor: "#fbbf24",
+    background: "#fffbeb",
+  };
+
   return (
     <div className="wechat-preview mx-auto max-w-[480px] overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm">
       <div className="border-b border-stone-100 bg-stone-50 px-5 py-3 text-xs tracking-wide text-stone-400">
         公众号预览
+        {theme.mood && (
+          <span className="ml-2 rounded-full bg-stone-200/80 px-2 py-0.5 text-[10px] text-stone-600">
+            {theme.mood}
+          </span>
+        )}
       </div>
       <div className="px-6 py-6">
         <h1 className="text-[22px] font-bold leading-snug tracking-tight text-stone-900">
           {content.title || "标题待生成"}
         </h1>
         {content.summary && (
-          <p className="mt-4 rounded-lg border-l-4 border-amber-400 bg-amber-50/60 px-4 py-3 text-sm leading-relaxed text-stone-600">
+          <p
+            className="mt-4 rounded-lg border-l-4 px-4 py-3 text-sm leading-relaxed text-stone-600"
+            style={summaryStyle}
+          >
             {content.summary}
           </p>
         )}
         <div
           className="article-body mt-6 text-[16px] text-stone-800"
+          style={{ ["--wechat-accent" as string]: accent }}
           dangerouslySetInnerHTML={{
-            __html: renderArticleMarkdown(content.body || "正文待生成"),
+            __html: renderWechatBodyInlineHtml(
+              content.body || "正文待生成",
+              theme,
+              coverAssets,
+              resolveImageUrl,
+            ),
           }}
         />
+        <p className="mt-6 rounded-lg bg-stone-50 px-3 py-2 text-xs leading-relaxed text-stone-500">
+          近似预览效果，以公众号后台为准。请使用顶栏「复制富文本」粘贴到 mp.weixin.qq.com；若图片不显示，请从配图清单下载后手动上传。
+        </p>
       </div>
     </div>
   );
@@ -139,7 +175,12 @@ export function PreviewPanel({
   platform: Platform;
 }) {
   if (platform === "wechat") {
-    return <WechatPreview content={project.platforms.wechat} />;
+    return (
+      <WechatPreview
+        content={project.platforms.wechat}
+        coverAssets={project.cover_assets}
+      />
+    );
   }
   if (platform === "xiaohongshu") {
     return <XiaohongshuPreview content={project.platforms.xiaohongshu} />;
@@ -149,8 +190,7 @@ export function PreviewPanel({
 
 export function getPlatformCopyText(project: ContentProject, platform: Platform): string {
   if (platform === "wechat") {
-    const c = project.platforms.wechat;
-    return `# ${c.title}\n\n${c.summary}\n\n${c.body}`;
+    return getWechatPlainText(project.platforms.wechat);
   }
   if (platform === "xiaohongshu") {
     const c = project.platforms.xiaohongshu;
@@ -162,6 +202,14 @@ export function getPlatformCopyText(project: ContentProject, platform: Platform)
     `时长：${c.duration}`,
     ...c.script.map((s) => `${s.index}. [${s.duration}] ${s.narration} | ${s.subtitle}`),
   ].join("\n");
+}
+
+export function getWechatCopyHtml(project: ContentProject): string {
+  return renderWechatCopyHtml(
+    project.platforms.wechat,
+    project.cover_assets,
+    resolveImageUrl,
+  );
 }
 
 export { platformLabels };

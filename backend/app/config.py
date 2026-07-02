@@ -1,9 +1,12 @@
 from functools import lru_cache
 from pathlib import Path
+import json
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
+API_KEYS_PATH = ROOT_DIR / "config" / "api_keys.local.json"
 
 
 class Settings(BaseSettings):
@@ -34,6 +37,22 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     openai_image_model: str = "gpt-image-2"
     openai_skip_proxy: bool = True
+
+    @field_validator(
+        "deepseek_api_key",
+        "openai_api_key",
+        "deepseek_base_url",
+        "openai_base_url",
+        "deepseek_model",
+        "openai_model",
+        "openai_image_model",
+        mode="before",
+    )
+    @classmethod
+    def strip_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
     skills_dir: Path = ROOT_DIR / "skills"
     vendor_skills_dir: Path = ROOT_DIR / "vendor" / "oh-my-writing-skill" / "skills"
@@ -78,9 +97,57 @@ class Settings(BaseSettings):
         return ("mock", "", "", "")
 
 
+def load_api_keys_file() -> dict:
+    if not API_KEYS_PATH.is_file():
+        return {}
+    try:
+        return json.loads(API_KEYS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _merge_api_keys(settings: Settings) -> Settings:
+    """与 studyx-agent-backend 一致：.env 优先，api_keys.local.json 补齐空项。"""
+    keys = load_api_keys_file()
+    if not keys:
+        return settings
+
+    updates: dict[str, object] = {}
+    string_fields = {
+        "openai_api_key": "openai_api_key",
+        "openai_base_url": "openai_base_url",
+        "openai_model": "openai_model",
+        "openai_image_model": "openai_image_model",
+        "deepseek_api_key": "deepseek_api_key",
+        "deepseek_base_url": "deepseek_base_url",
+        "deepseek_model": "deepseek_model",
+        "llm_provider": "default_llm_provider",
+    }
+    for field, json_key in string_fields.items():
+        incoming = str(keys.get(json_key) or "").strip()
+        if not incoming:
+            continue
+        current = getattr(settings, field)
+        if isinstance(current, str) and not current.strip():
+            updates[field] = incoming
+
+    skip_raw = keys.get("openai_skip_proxy")
+    if skip_raw is not None and str(skip_raw).strip() != "":
+        updates["openai_skip_proxy"] = str(skip_raw).strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+
+    if not updates:
+        return settings
+    return settings.model_copy(update=updates)
+
+
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return _merge_api_keys(Settings())
 
 
 def reload_settings() -> Settings:

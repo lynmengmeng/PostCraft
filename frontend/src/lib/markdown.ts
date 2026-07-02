@@ -34,6 +34,17 @@ export function renderArticleMarkdown(body: string): string {
   for (const line of lines) {
     const trimmed = line.trim();
 
+    const imageMatch = trimmed.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imageMatch) {
+      closeLists();
+      const alt = imageMatch[1];
+      const src = imageMatch[2];
+      html.push(
+        `<figure class="article-figure"><img class="article-img" src="${src.replace(/"/g, "&quot;")}" alt="${alt.replace(/"/g, "&quot;")}" /><figcaption class="article-caption">${inlineFormat(alt)}</figcaption></figure>`,
+      );
+      continue;
+    }
+
     if (trimmed.startsWith("### ")) {
       closeLists();
       html.push(`<h4 class="article-h4">${inlineFormat(trimmed.slice(4))}</h4>`);

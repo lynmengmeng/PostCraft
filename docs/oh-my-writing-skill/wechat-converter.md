@@ -478,3 +478,61 @@ AI写作工具那么多，到底该用哪个？测试了几个月的主流产品
 
 **标签建议：**
 #AI工具 #写作效率 #生产力 #内容创作 #工具推荐
+
+---
+
+## JSON 输出规范（PostCraft 集成）
+
+转换完成后，必须输出严格 JSON（不是 Markdown 文件），格式如下：
+
+```json
+{
+  "title": "公众号标题",
+  "summary": "120字以内摘要",
+  "body": "Markdown 正文，含 ## 小标题、引用、列表",
+  "style_theme": {
+    "accent": "#455548",
+    "mood": "warm|cool|neutral|story|checklist",
+    "heading_style": "border_left|underline|plain",
+    "quote_bg": "#faf8f5",
+    "quote_border": "#d4a574",
+    "text_color": "#3f3f3f",
+    "heading_color": "#1a1c1b"
+  },
+  "image_placements": [
+    {
+      "after_paragraph": 2,
+      "asset_index": 0,
+      "caption": "图注说明",
+      "prompt": "配图生成提示词，纪实风格、暖色调、真实场景"
+    }
+  ]
+}
+```
+
+**style_theme 规则：**
+
+- 根据文章调性自动选择配色，每篇可不同
+- 干货/清单类：`accent` 偏蓝绿，`mood`: `checklist`
+- 故事/观察类：`accent` 偏暖棕，`mood`: `story`
+- 深度长文：`heading_style`: `border_left`
+
+**image_placements 规则：**
+
+- 每篇建议 2-3 处正文配图（不含封面）
+- `after_paragraph`：在第几个段落后插入（从 1 起计）
+- 正文中对应位置写 `![图注](__IMAGE_N__)`，N 与 `asset_index` 一致
+- `prompt` 需具体描述画面，便于 AI 生图
+
+**body 配图占位符示例：**
+
+```markdown
+## 第一节
+
+第一段正文...
+
+![维生素 D 食物来源](__IMAGE_0__)
+
+第二段正文...
+```
+

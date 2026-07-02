@@ -46,8 +46,9 @@ export interface ChatResult {
 }
 
 export interface ChatOptions {
-  action?: "generate_draft" | "generate_platform" | "generate_all" | "refine_draft";
+  action?: "generate_draft" | "generate_platform" | "generate_all" | "refine_draft" | "layout_images";
   target_platforms?: Platform[];
+  attachment_urls?: string[];
 }
 
 export const api = {
@@ -100,6 +101,7 @@ export const api = {
       stream,
       ...(options?.action ? { action: options.action } : {}),
       ...(options?.target_platforms ? { target_platforms: options.target_platforms } : {}),
+      ...(options?.attachment_urls?.length ? { attachment_urls: options.attachment_urls } : {}),
     };
     if (!stream) {
       return request<ChatResult>(`/projects/${id}/chat`, {
@@ -264,6 +266,34 @@ export const api = {
     let response: Response;
     try {
       response = await fetch(`${API_BASE}/projects/${projectId}/upload-cover`, {
+        method: "POST",
+        body: form,
+      });
+    } catch (error) {
+      throw new ApiError(formatApiError(error, API_BASE), {
+        cause: error,
+        isNetworkError: isNetworkFetchError(error),
+      });
+    }
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Upload failed: ${response.status}`);
+    }
+    return response.json() as Promise<ContentProject>;
+  },
+
+  uploadAsset: async (
+    projectId: string,
+    file: File,
+    options?: { caption?: string; insertPlaceholder?: boolean },
+  ) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("caption", options?.caption ?? "");
+    form.append("insert_placeholder", String(options?.insertPlaceholder ?? true));
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/projects/${projectId}/upload-asset`, {
         method: "POST",
         body: form,
       });

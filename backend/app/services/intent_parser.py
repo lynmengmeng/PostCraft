@@ -28,6 +28,7 @@ QUICK_INTENTS = [
     (re.compile(r"生成小红书|小红书版本|转成小红书"), "generate_platform", ["xiaohongshu"]),
     (re.compile(r"生成抖音|抖音版本|口播脚本|转成抖音"), "generate_platform", ["douyin"]),
     (re.compile(r"撤销|回退|上一版"), "rollback", []),
+    (re.compile(r"调整配图|配图位置|移动.*图|图.*移到|重新排版.*图|插入配图|图片位置"), "layout_images", []),
     (re.compile(r"封面|配图"), "cover_assets", []),
     (re.compile(r"同步.*平台|更新.*平台"), "patch_platform", []),
 ]

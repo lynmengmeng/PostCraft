@@ -1,0 +1,11 @@
+{
+  "default_llm_provider": "deepseek",
+  "openai_api_key": "sk-your-key-here",
+  "openai_model": "gpt-5.4-mini-2026-03-17",
+  "openai_base_url": "https://api.openai.com/v1",
+  "openai_image_model": "gpt-image-2",
+  "openai_skip_proxy": true,
+  "deepseek_api_key": "",
+  "deepseek_base_url": "https://api.deepseek.com",
+  "deepseek_model": "deepseek-chat"
+}

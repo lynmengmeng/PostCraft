@@ -4,6 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { resolveImageUrl } from "@/lib/export";
 import type { ContentProject, Platform } from "@/lib/types";
+import {
+  createEmptyAssetSlot,
+  insertPlaceholderInBody,
+  nextAssetIndex,
+  syncImagePlacementsFromBody,
+} from "@/lib/wechat-assets";
 
 export type EditorTab = "draft" | Platform;
 
@@ -17,6 +23,8 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const wechatAssetInputRef = useRef<HTMLInputElement>(null);
+  const wechatBodyRef = useRef<HTMLTextAreaElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -25,7 +33,7 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
     };
   }, []);
 
-  function scheduleSave(next: ContentProject) {
+  function scheduleSave(next: ContentProject, includeAssets = false) {
     onUpdate(next);
     setSaveState("saving");
     if (timer.current) clearTimeout(timer.current);
@@ -35,6 +43,7 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
           platforms: next.platforms,
           draft: next.draft,
           humanized: next.humanized,
+          ...(includeAssets ? { cover_assets: next.cover_assets } : {}),
         });
         onUpdate(saved);
         setSaveState("saved");
@@ -48,7 +57,60 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
   function updateWechat(field: "title" | "summary" | "body", value: string) {
     const next = structuredClone(project);
     next.platforms.wechat[field] = value;
-    scheduleSave(next);
+    if (field === "body") {
+      next.platforms.wechat.image_placements = syncImagePlacementsFromBody(
+        value,
+        next.cover_assets,
+      );
+    }
+    scheduleSave(next, field === "body");
+  }
+
+  function insertWechatPlaceholderAtCursor() {
+    const index = nextAssetIndex(project.cover_assets);
+    const caption = `配图${index + 1}`;
+    const placeholder = `![${caption}](__IMAGE_${index}__)`;
+    const body = project.platforms.wechat.body || "";
+    const textarea = wechatBodyRef.current;
+    let nextBody = body;
+
+    if (textarea) {
+      const start = textarea.selectionStart ?? body.length;
+      const end = textarea.selectionEnd ?? body.length;
+      const before = body.slice(0, start);
+      const after = body.slice(end);
+      const prefix = before && !before.endsWith("\n\n") ? (before.endsWith("\n") ? "\n" : "\n\n") : "";
+      const suffix = after && !after.startsWith("\n") ? "\n\n" : "";
+      nextBody = `${before}${prefix}${placeholder}${suffix}${after}`;
+    } else {
+      nextBody = insertPlaceholderInBody(body, index, caption);
+    }
+
+    const next = structuredClone(project);
+    next.platforms.wechat.body = nextBody;
+    next.platforms.wechat.image_placements = syncImagePlacementsFromBody(nextBody, [
+      ...next.cover_assets,
+      createEmptyAssetSlot(index, caption),
+    ]);
+    if (!next.cover_assets.some((a) => (a.asset_index ?? -1) === index)) {
+      next.cover_assets.push(createEmptyAssetSlot(index, caption));
+    }
+    scheduleSave(next, true);
+  }
+
+  async function handleWechatAssetUpload(file: File) {
+    setUploading(true);
+    try {
+      const caption = file.name.replace(/\.[^.]+$/, "").slice(0, 20) || "用户配图";
+      const saved = await api.uploadAsset(project.id, file, {
+        caption,
+        insertPlaceholder: true,
+      });
+      onUpdate(saved);
+    } finally {
+      setUploading(false);
+      if (wechatAssetInputRef.current) wechatAssetInputRef.current.value = "";
+    }
   }
 
   function updateXhs(field: "title" | "body", value: string) {
@@ -131,11 +193,43 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
             className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm"
             placeholder="摘要"
           />
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={insertWechatPlaceholderAtCursor}
+              className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs text-stone-600 hover:bg-stone-50"
+            >
+              插入配图占位
+            </button>
+            <button
+              type="button"
+              onClick={() => wechatAssetInputRef.current?.click()}
+              disabled={uploading}
+              className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs text-white disabled:opacity-50"
+            >
+              {uploading ? "上传中…" : "上传配图"}
+            </button>
+            <input
+              ref={wechatAssetInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void handleWechatAssetUpload(file);
+              }}
+            />
+          </div>
+          <p className="text-xs leading-relaxed text-stone-400">
+            在正文对应位置写 <code className="rounded bg-stone-100 px-1">![图注](__IMAGE_0__)</code>{" "}
+            占位，或在聊天中上传素材后说「把这张图放到第 2 段后」。
+          </p>
           <textarea
+            ref={wechatBodyRef}
             value={project.platforms.wechat.body}
             onChange={(e) => updateWechat("body", e.target.value)}
-            className="min-h-48 w-full rounded-lg border border-stone-200 p-3 text-sm leading-7"
-            placeholder="正文 Markdown"
+            className="min-h-48 w-full rounded-lg border border-stone-200 p-3 font-mono text-sm leading-7"
+            placeholder="正文 Markdown，可用 ![图注](__IMAGE_0__) 标记配图位置"
           />
         </div>
       )}

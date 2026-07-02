@@ -34,16 +34,29 @@ def _mock_platform_payload(project: ContentProject, humanized: str) -> dict:
         body=(
             f"## 从一个细节说起\n\n"
             f"{inspiration}\n\n"
+            "![回村观察](__IMAGE_0__)\n\n"
             "去年春节回村，我才真正注意到：很多老人并不是突然病倒，"
             "而是长期处在不安全的生活环境里。\n\n"
             "## 三个容易被忽略的原因\n\n"
             "1. **劣质日用品长期接触**——三无产品在农村仍很常见\n"
             "2. **医疗意识不足**——小问题拖成大问题\n"
             "3. **环境问题被默认接受**——安全与健康被当作「没办法」\n\n"
+            "![日常细节](__IMAGE_1__)\n\n"
             "> 这不是要制造焦虑，而是希望我们都能更认真地看待普通人的生活。\n\n"
             "## 写在最后\n\n"
             "如果你也有类似观察，欢迎在评论区聊聊。"
         ),
+        style_theme={
+            "accent": "#455548",
+            "mood": "warm",
+            "heading_style": "border_left",
+            "quote_bg": "#faf8f5",
+            "quote_border": "#d4a574",
+        },
+        image_placements=[
+            {"after_paragraph": 1, "asset_index": 0, "caption": "回村观察", "prompt": "纪实风格，农村傍晚，真实生活场景"},
+            {"after_paragraph": 4, "asset_index": 1, "caption": "日常细节", "prompt": "纪实风格，农村老人日常，暖色调"},
+        ],
     )
     xhs = XiaohongshuContent(
         title=xhs_title,
@@ -146,11 +159,23 @@ def build_mock_platforms(
         patch["titles"] = [item.model_dump(mode="json") for item in payload["titles"]]  # type: ignore[index]
         patch["cover_assets"] = [
             CoverAsset(
-                platform="all",
+                platform="wechat",
                 headline=str(payload["wechat_title"])[:20],
-                subheadline="真实观察 · 温和提醒",
-                prompt="纪实风格，暖色乡村傍晚，真实生活场景，不要明显 AI 感",
-            ).model_dump(mode="json")
+                subheadline="回村观察",
+                prompt="纪实风格，农村傍晚，真实生活场景",
+                after_paragraph=1,
+                caption="回村观察",
+                asset_index=0,
+            ).model_dump(mode="json"),
+            CoverAsset(
+                platform="wechat",
+                headline=str(payload["wechat_title"])[:20],
+                subheadline="日常细节",
+                prompt="纪实风格，农村老人日常，暖色调",
+                after_paragraph=4,
+                caption="日常细节",
+                asset_index=1,
+            ).model_dump(mode="json"),
         ]
     label = "、".join(targets)
     return ContentPatch(

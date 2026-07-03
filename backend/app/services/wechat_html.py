@@ -6,6 +6,7 @@ from typing import Any
 from app.models.schemas import CoverAsset, WechatContent
 
 DEFAULT_THEME: dict[str, str] = {
+    "layout_preset": "classic",
     "accent": "#455548",
     "mood": "warm",
     "heading_style": "border_left",
@@ -14,6 +15,8 @@ DEFAULT_THEME: dict[str, str] = {
     "text_color": "#3f3f3f",
     "heading_color": "#1a1c1b",
 }
+
+VALID_PRESETS = frozenset({"classic", "lively", "story", "checklist"})
 
 IMAGE_PLACEHOLDER_RE = re.compile(r"^__IMAGE_(\d+)__$")
 MARKDOWN_IMAGE_RE = re.compile(r"^!\[([^\]]*)\]\(([^)]+)\)$")
@@ -28,12 +31,25 @@ def _escape_html(text: str) -> str:
     )
 
 
-def _inline_format(text: str) -> str:
+def _inline_format(text: str, accent: str | None = None) -> str:
     escaped = _escape_html(text)
-    escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+    if accent:
+        escaped = re.sub(
+            r"\*\*(.+?)\*\*",
+            rf'<strong style="font-weight:600;color:{accent};">\1</strong>',
+            escaped,
+        )
+    else:
+        escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
     escaped = re.sub(r"\*(.+?)\*", r"<em>\1</em>", escaped)
     escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
     return escaped
+
+
+def _accent_tint(hex_color: str, alpha: str = "14") -> str:
+    if hex_color.startswith("#") and len(hex_color) == 7:
+        return hex_color + alpha
+    return hex_color
 
 
 def normalize_style_theme(theme: dict[str, Any] | None) -> dict[str, str]:
@@ -42,10 +58,12 @@ def normalize_style_theme(theme: dict[str, Any] | None) -> dict[str, str]:
         for key, value in theme.items():
             if isinstance(value, str) and value:
                 merged[key] = value
+    if merged.get("layout_preset") not in VALID_PRESETS:
+        merged["layout_preset"] = "classic"
     return merged
 
 
-def _styles(theme: dict[str, str]) -> dict[str, str]:
+def _classic_styles(theme: dict[str, str]) -> dict[str, str]:
     heading_border = ""
     if theme.get("heading_style") == "border_left":
         heading_border = f"border-left:4px solid {theme['accent']};padding-left:12px;"
@@ -70,17 +88,180 @@ def _styles(theme: dict[str, str]) -> dict[str, str]:
             f"border-left:4px solid {theme['quote_border']};color:#666;font-size:15px;line-height:1.85;"
         ),
         "hr": "margin:24px 0;border:none;border-top:1px solid #e8e4df;",
+        "hr_block": "",
         "ol": f"margin:12px 0 20px;padding-left:24px;color:{theme['text_color']};",
         "ul": f"margin:12px 0 20px;padding-left:24px;color:{theme['text_color']};",
         "li": "margin-bottom:10px;line-height:1.85;font-size:16px;",
+        "li_prefix": "",
         "summary": (
             "margin:16px 0;padding:12px 16px;background:#fffbeb;border-left:4px solid #fbbf24;"
             "color:#57534e;font-size:14px;line-height:1.75;"
         ),
+        "tip": "",
+        "warn": "",
         "image_wrap": "margin:20px 0;text-align:center;",
         "image": "width:100%;max-width:100%;border-radius:8px;display:block;margin:0 auto;",
         "caption": "font-size:13px;color:#999;margin-top:8px;line-height:1.5;",
+        "accent_inline": "",
     }
+
+
+def _lively_styles(theme: dict[str, str]) -> dict[str, str]:
+    accent = theme["accent"]
+    tint = _accent_tint(accent)
+    return {
+        "p": (
+            f"margin:0 0 16px;line-height:1.9;font-size:16px;color:{theme['text_color']};"
+            "text-align:justify;letter-spacing:0.02em;"
+        ),
+        "h2": (
+            f"margin:28px 0 14px;font-size:20px;font-weight:700;color:{theme['heading_color']};"
+            f"background:{tint};border-radius:8px;padding:10px 14px;"
+        ),
+        "h3": (
+            f"margin:24px 0 12px;font-size:18px;font-weight:700;color:{theme['heading_color']};"
+            f"background:{tint};border-radius:8px;padding:8px 12px;"
+        ),
+        "h4": (
+            f"margin:20px 0 10px;font-size:16px;font-weight:700;color:{theme['heading_color']};"
+            f"background:{tint};border-radius:6px;padding:6px 10px;"
+        ),
+        "quote": (
+            f"margin:16px 0;padding:14px 18px;background:{theme['quote_bg']};"
+            f"border-left:4px solid {theme['quote_border']};border-radius:8px;"
+            "box-shadow:0 2px 8px rgba(0,0,0,0.06);color:#666;font-size:15px;line-height:1.85;"
+        ),
+        "hr": "margin:24px 0;border:none;border-top:1px solid #e8e4df;",
+        "hr_block": "margin:24px 0;text-align:center;color:#ccc;letter-spacing:10px;font-size:18px;",
+        "ol": f"margin:12px 0 20px;padding-left:24px;color:{theme['text_color']};",
+        "ul": f"margin:12px 0 20px;padding-left:4px;list-style:none;color:{theme['text_color']};",
+        "li": "margin-bottom:10px;line-height:1.85;font-size:16px;",
+        "li_prefix": f"color:{accent};margin-right:6px;",
+        "summary": (
+            f"margin:16px 0;padding:12px 16px;background:{theme['quote_bg']};"
+            f"border-left:4px solid {theme['quote_border']};border-radius:8px;"
+            "color:#57534e;font-size:14px;line-height:1.75;"
+        ),
+        "tip": (
+            f"margin:16px 0;padding:12px 16px;background:{tint};"
+            f"border-left:4px solid {accent};border-radius:8px;"
+            "color:#444;font-size:15px;line-height:1.85;"
+        ),
+        "warn": (
+            "margin:16px 0;padding:12px 16px;background:#fef2f2;"
+            "border-left:4px solid #f87171;border-radius:8px;"
+            "color:#7f1d1d;font-size:15px;line-height:1.85;"
+        ),
+        "image_wrap": "margin:20px 0;text-align:center;",
+        "image": "width:100%;max-width:100%;border-radius:8px;display:block;margin:0 auto;",
+        "caption": "font-size:13px;color:#999;margin-top:8px;line-height:1.5;",
+        "accent_inline": accent,
+    }
+
+
+def _story_styles(theme: dict[str, str]) -> dict[str, str]:
+    accent = theme["accent"]
+    return {
+        "p": (
+            f"margin:0 0 18px;line-height:2.1;font-size:16px;color:{theme['text_color']};"
+            "text-align:left;letter-spacing:0.03em;"
+        ),
+        "h2": (
+            f"margin:32px 0 16px;font-size:20px;font-weight:700;color:{theme['heading_color']};"
+            f"text-align:center;border-bottom:2px solid {accent};padding-bottom:8px;"
+        ),
+        "h3": (
+            f"margin:28px 0 14px;font-size:18px;font-weight:600;color:{theme['heading_color']};"
+            f"text-align:center;border-bottom:1px solid {accent};padding-bottom:6px;"
+        ),
+        "h4": (
+            f"margin:22px 0 12px;font-size:16px;font-weight:600;color:{theme['heading_color']};"
+            "text-align:center;"
+        ),
+        "quote": (
+            f"margin:20px 0;padding:14px 20px;background:{theme['quote_bg']};"
+            f"border-left:none;border-top:1px solid {theme['quote_border']};"
+            f"border-bottom:1px solid {theme['quote_border']};"
+            "color:#666;font-size:15px;line-height:2;font-style:italic;text-align:center;"
+        ),
+        "hr": "margin:28px 0;border:none;border-top:1px solid #e8e4df;",
+        "hr_block": "",
+        "ol": f"margin:14px 0 22px;padding-left:24px;color:{theme['text_color']};",
+        "ul": f"margin:14px 0 22px;padding-left:24px;color:{theme['text_color']};",
+        "li": "margin-bottom:12px;line-height:2;font-size:16px;",
+        "li_prefix": "",
+        "summary": (
+            f"margin:16px 0;padding:14px 18px;background:{theme['quote_bg']};"
+            "border:none;border-radius:4px;"
+            "color:#57534e;font-size:14px;line-height:1.9;text-align:center;font-style:italic;"
+        ),
+        "tip": "",
+        "warn": "",
+        "image_wrap": "margin:24px 0;text-align:center;",
+        "image": "width:100%;max-width:100%;border-radius:4px;display:block;margin:0 auto;",
+        "caption": "font-size:13px;color:#999;margin-top:8px;line-height:1.5;font-style:italic;",
+        "accent_inline": "",
+    }
+
+
+def _checklist_styles(theme: dict[str, str]) -> dict[str, str]:
+    accent = theme["accent"]
+    tint = _accent_tint(accent)
+    return {
+        "p": (
+            f"margin:0 0 12px;line-height:1.75;font-size:15px;color:{theme['text_color']};"
+            "text-align:left;"
+        ),
+        "h2": (
+            f"margin:24px 0 12px;font-size:19px;font-weight:700;color:#fff;"
+            f"background:{accent};border-radius:20px;padding:8px 16px;display:inline-block;"
+        ),
+        "h3": (
+            f"margin:20px 0 10px;font-size:17px;font-weight:700;color:{theme['heading_color']};"
+            f"border-left:4px solid {accent};padding-left:10px;"
+        ),
+        "h4": f"margin:16px 0 8px;font-size:15px;font-weight:700;color:{theme['heading_color']};",
+        "quote": (
+            f"margin:12px 0;padding:10px 14px;background:{theme['quote_bg']};"
+            f"border-left:3px solid {theme['quote_border']};color:#555;font-size:14px;line-height:1.7;"
+        ),
+        "hr": "margin:16px 0;border:none;border-top:1px dashed #d6d3d1;",
+        "hr_block": "",
+        "ol": f"margin:8px 0 16px;padding-left:22px;color:{theme['text_color']};",
+        "ul": f"margin:8px 0 16px;padding-left:22px;color:{theme['text_color']};",
+        "li": "margin-bottom:6px;line-height:1.75;font-size:15px;",
+        "li_prefix": "",
+        "summary": (
+            f"margin:12px 0;padding:10px 14px;background:{tint};"
+            f"border:1px solid {accent};border-radius:6px;"
+            "color:#444;font-size:14px;line-height:1.7;"
+        ),
+        "tip": (
+            f"margin:12px 0;padding:10px 14px;background:{tint};"
+            f"border:1px solid {accent};border-radius:6px;"
+            "color:#444;font-size:14px;line-height:1.7;"
+        ),
+        "warn": (
+            "margin:12px 0;padding:10px 14px;background:#fef2f2;"
+            "border:1px solid #fca5a5;border-radius:6px;"
+            "color:#7f1d1d;font-size:14px;line-height:1.7;"
+        ),
+        "image_wrap": "margin:16px 0;text-align:center;",
+        "image": "width:100%;max-width:100%;border-radius:6px;display:block;margin:0 auto;",
+        "caption": "font-size:12px;color:#999;margin-top:6px;line-height:1.4;",
+        "accent_inline": "",
+    }
+
+
+def _styles(theme: dict[str, str]) -> dict[str, str]:
+    preset = theme.get("layout_preset", "classic")
+    if preset == "lively":
+        return _lively_styles(theme)
+    if preset == "story":
+        return _story_styles(theme)
+    if preset == "checklist":
+        return _checklist_styles(theme)
+    return _classic_styles(theme)
 
 
 def replace_image_placeholders(body: str, cover_assets: list[CoverAsset | dict[str, Any]]) -> str:
@@ -91,6 +272,35 @@ def replace_image_placeholders(body: str, cover_assets: list[CoverAsset | dict[s
             continue
         result = result.replace(f"__IMAGE_{index}__", url)
     return result
+
+
+def _render_quote_block(inner: str, s: dict[str, str]) -> str:
+    stripped = inner.strip()
+    if stripped.startswith("💡") and s.get("tip"):
+        text = stripped.lstrip("💡").strip()
+        return f'<blockquote style="{s["tip"]}">💡 {_inline_format(text, s.get("accent_inline") or None)}</blockquote>'
+    if stripped.startswith("⚠️") and s.get("warn"):
+        text = stripped.lstrip("⚠️").strip()
+        return f'<blockquote style="{s["warn"]}">⚠️ {_inline_format(text)}</blockquote>'
+    accent = s.get("accent_inline") or None
+    return f'<blockquote style="{s["quote"]}">{_inline_format(inner, accent)}</blockquote>'
+
+
+def _render_hr(s: dict[str, str]) -> str:
+    if s.get("hr_block"):
+        return f'<section style="{s["hr_block"]}">· · ·</section>'
+    return f'<hr style="{s["hr"]}" />'
+
+
+def _render_list_item(text: str, s: dict[str, str], *, ordered: bool, index: int = 0) -> str:
+    accent = s.get("accent_inline")
+    formatted = _inline_format(text, accent or None)
+    if s.get("li_prefix") and not ordered:
+        return (
+            f'<li style="{s["li"]}">'
+            f'<span style="{s["li_prefix"]}">●</span>{formatted}</li>'
+        )
+    return f'<li style="{s["li"]}">{formatted}</li>'
 
 
 def render_wechat_body_inline_html(
@@ -105,15 +315,17 @@ def render_wechat_body_inline_html(
     html: list[str] = []
     in_ol = False
     in_ul = False
+    ol_counter = 0
 
     def close_lists() -> None:
-        nonlocal in_ol, in_ul
+        nonlocal in_ol, in_ul, ol_counter
         if in_ol:
             html.append("</ol>")
             in_ol = False
         if in_ul:
             html.append("</ul>")
             in_ul = False
+        ol_counter = 0
 
     def resolve_image_src(src: str) -> tuple[str, str]:
         match = IMAGE_PLACEHOLDER_RE.match(src)
@@ -122,12 +334,14 @@ def render_wechat_body_inline_html(
             if index < len(assets):
                 asset = assets[index]
                 url = asset.get("image_url", "") if isinstance(asset, dict) else asset.image_url
+                source = asset.get("source", "") if isinstance(asset, dict) else getattr(asset, "source", "")
                 caption = (
                     asset.get("caption") or asset.get("subheadline") or ""
                     if isinstance(asset, dict)
                     else (asset.caption or asset.subheadline or "")
                 )
-                return url, caption
+                if url and source != "placeholder":
+                    return url, caption
             return "", ""
         return src, ""
 
@@ -157,23 +371,23 @@ def render_wechat_body_inline_html(
 
         if trimmed.startswith("### "):
             close_lists()
-            html.append(f'<h4 style="{s["h4"]}">{_inline_format(trimmed[4:])}</h4>')
+            html.append(f'<h4 style="{s["h4"]}">{_inline_format(trimmed[4:], s.get("accent_inline") or None)}</h4>')
             continue
         if trimmed.startswith("## "):
             close_lists()
-            html.append(f'<h3 style="{s["h3"]}">{_inline_format(trimmed[3:])}</h3>')
+            html.append(f'<h3 style="{s["h3"]}">{_inline_format(trimmed[3:], s.get("accent_inline") or None)}</h3>')
             continue
         if trimmed.startswith("# "):
             close_lists()
-            html.append(f'<h2 style="{s["h2"]}">{_inline_format(trimmed[2:])}</h2>')
+            html.append(f'<h2 style="{s["h2"]}">{_inline_format(trimmed[2:], s.get("accent_inline") or None)}</h2>')
             continue
         if trimmed.startswith("> "):
             close_lists()
-            html.append(f'<blockquote style="{s["quote"]}">{_inline_format(trimmed[2:])}</blockquote>')
+            html.append(_render_quote_block(trimmed[2:], s))
             continue
         if re.fullmatch(r"(-{3,}|_{3,}|\*{3,})", trimmed):
             close_lists()
-            html.append(f'<hr style="{s["hr"]}" />')
+            html.append(_render_hr(s))
             continue
 
         ol_match = re.match(r"^(\d+)[.)]\s+(.+)$", trimmed)
@@ -182,7 +396,9 @@ def render_wechat_body_inline_html(
                 close_lists()
                 html.append(f'<ol style="{s["ol"]}">')
                 in_ol = True
-            html.append(f'<li style="{s["li"]}">{_inline_format(ol_match.group(2))}</li>')
+                ol_counter = 0
+            ol_counter += 1
+            html.append(_render_list_item(ol_match.group(2), s, ordered=True, index=ol_counter))
             continue
 
         ul_match = re.match(r"^[-*•]\s+(.+)$", trimmed)
@@ -191,7 +407,7 @@ def render_wechat_body_inline_html(
                 close_lists()
                 html.append(f'<ul style="{s["ul"]}">')
                 in_ul = True
-            html.append(f'<li style="{s["li"]}">{_inline_format(ul_match.group(1))}</li>')
+            html.append(_render_list_item(ul_match.group(1), s, ordered=False))
             continue
 
         if not trimmed:
@@ -199,7 +415,7 @@ def render_wechat_body_inline_html(
             continue
 
         close_lists()
-        html.append(f'<p style="{s["p"]}">{_inline_format(trimmed)}</p>')
+        html.append(f'<p style="{s["p"]}">{_inline_format(trimmed, s.get("accent_inline") or None)}</p>')
 
     close_lists()
     return "".join(html)
@@ -208,13 +424,15 @@ def render_wechat_body_inline_html(
 def build_formatted_html(
     content: WechatContent | dict[str, Any],
     cover_assets: list[CoverAsset | dict[str, Any]] | None = None,
+    *,
+    force_rerender: bool = False,
 ) -> str:
     if isinstance(content, dict):
         data = content
     else:
         data = content.model_dump(mode="json")
 
-    if data.get("formatted_html", "").strip():
+    if not force_rerender and data.get("formatted_html", "").strip():
         return data["formatted_html"]
 
     theme = data.get("style_theme") or {}
@@ -228,6 +446,20 @@ def build_formatted_html(
     return "".join(parts)
 
 
+def apply_layout_preset(
+    body: str,
+    theme: dict[str, Any] | None = None,
+    summary: str = "",
+    cover_assets: list[CoverAsset | dict[str, Any]] | None = None,
+) -> str:
+    """Re-render formatted HTML with a layout preset without changing body text."""
+    return build_formatted_html(
+        {"body": body, "summary": summary, "style_theme": theme or {}},
+        cover_assets,
+        force_rerender=True,
+    )
+
+
 def finalize_wechat_content(
     wechat_data: dict[str, Any],
     cover_assets: list[dict[str, Any]] | None = None,
@@ -235,6 +467,6 @@ def finalize_wechat_content(
     assets = cover_assets or []
     body = replace_image_placeholders(wechat_data.get("body", ""), assets)
     wechat_data = {**wechat_data, "body": body}
-    content = WechatContent.model_validate(wechat_data)
-    wechat_data["formatted_html"] = build_formatted_html(content.model_dump(mode="json"), assets)
+    wechat_data.pop("formatted_html", None)
+    wechat_data["formatted_html"] = build_formatted_html(wechat_data, assets, force_rerender=True)
     return wechat_data

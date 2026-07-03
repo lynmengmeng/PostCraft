@@ -23,6 +23,27 @@ export interface AuthConfig {
   allow_register: boolean;
 }
 
+async function validateStoredSession(): Promise<StoredUser | null> {
+  const token = getToken();
+  const stored = getStoredUser();
+  if (!token || !stored) return null;
+  try {
+    const response = await fetch(`${API_BASE}/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      clearAuth();
+      return null;
+    }
+    const user = (await response.json()) as StoredUser;
+    setAuth(token, user);
+    return user;
+  } catch {
+    return stored;
+  }
+}
+
 interface AuthContextValue {
   user: StoredUser | null;
   config: AuthConfig | null;
@@ -60,7 +81,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const cfg = await fetchAuthConfig();
       if (cancelled) return;
       setConfig(cfg);
-      setUser(getStoredUser());
+      const validated = await validateStoredSession();
+      if (cancelled) return;
+      setUser(validated);
       setLoading(false);
     })();
     return () => {

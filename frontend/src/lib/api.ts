@@ -5,6 +5,8 @@ import type {
   InspirationStats,
   LLMStatus,
   Platform,
+  ProjectDraftExport,
+  ProjectDraftImportPayload,
   RiskWarning,
   Topic,
   TopicStats,
@@ -62,8 +64,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface ChatResult {
   project: ContentProject;
-  assistant_message: { content: string };
-  patch?: Record<string, unknown>;
+  assistant_message: { content: string; id?: string };
+  patch?: {
+    intent?: string;
+    preview_hints?: string[];
+    summary?: string;
+  };
+}
+
+export interface TrialMetricsSummary {
+  total_projects: number;
+  completed_projects: number;
+  completion_rate: number;
+  avg_chat_rounds: number;
+  multi_platform_rate: number;
 }
 
 export interface ChatOptions {
@@ -114,6 +128,14 @@ export const api = {
     }),
   deleteProject: (id: string) =>
     request<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" }),
+
+  exportDraftBundle: (id: string) =>
+    request<ProjectDraftExport>(`/projects/${id}/export-draft`),
+  importDraftBundle: (payload: ProjectDraftImportPayload) =>
+    request<ContentProject>("/projects/import-draft", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 
   applyTitle: (id: string, titleIndex: number, platform: Platform) =>
     request<ContentProject>(`/projects/${id}/apply-title`, {
@@ -285,6 +307,78 @@ export const api = {
     throw new Error("未收到完整流式响应");
   },
 
+  cascadePlatforms: async (
+    id: string,
+    targetPlatforms: Platform[],
+    stream = true,
+    onDelta?: (text: string) => void,
+  ) => {
+    const body = { target_platforms: targetPlatforms, stream };
+    if (!stream) {
+      return request<ChatResult>(`/projects/${id}/cascade`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/projects/${id}/cascade`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      throw new ApiError(formatApiError(error, API_BASE), {
+        cause: error,
+        isNetworkFetchError: isNetworkFetchError(error),
+      });
+    }
+
+    if (response.status === 401) {
+      handleUnauthorized();
+    }
+    if (!response.ok || !response.body) {
+      throw new Error("级联同步请求失败");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() || "";
+      for (const chunk of chunks) {
+        if (chunk.startsWith("event: delta")) {
+          const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
+          if (dataLine) {
+            const payload = JSON.parse(dataLine.slice(6)) as { text: string };
+            onDelta?.(payload.text);
+          }
+        }
+        if (chunk.startsWith("event: error")) {
+          const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
+          if (dataLine) {
+            const payload = JSON.parse(dataLine.slice(6)) as { message?: string };
+            throw new Error(payload.message || "级联同步失败");
+          }
+        }
+        if (chunk.startsWith("event: done")) {
+          const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
+          if (dataLine) return JSON.parse(dataLine.slice(6)) as ChatResult;
+        }
+      }
+    }
+
+    throw new Error("未收到完整流式响应");
+  },
+
+  trialSummary: () => request<TrialMetricsSummary>("/analytics/trial-summary"),
+
   listInspirations: () => request<Inspiration[]>("/inspirations"),
   inspirationStats: () => request<InspirationStats>("/inspirations/stats"),
   createInspiration: (
@@ -415,12 +509,15 @@ export const api = {
   uploadAsset: async (
     projectId: string,
     file: File,
-    options?: { caption?: string; insertPlaceholder?: boolean },
+    options?: { caption?: string; insertPlaceholder?: boolean; assetIndex?: number },
   ) => {
     const form = new FormData();
     form.append("file", file);
     form.append("caption", options?.caption ?? "");
     form.append("insert_placeholder", String(options?.insertPlaceholder ?? true));
+    if (options?.assetIndex != null) {
+      form.append("asset_index", String(options.assetIndex));
+    }
     let response: Response;
     try {
       response = await fetch(`${API_BASE}/projects/${projectId}/upload-asset`, {
@@ -440,6 +537,32 @@ export const api = {
     if (!response.ok) {
       const detail = await response.text();
       throw new Error(detail || `Upload failed: ${response.status}`);
+    }
+    return response.json() as Promise<ContentProject>;
+  },
+
+  generateAssetImage: async (projectId: string, assetIndex: number) => {
+    let response: Response;
+    try {
+      response = await fetch(
+        `${API_BASE}/projects/${projectId}/assets/${assetIndex}/generate`,
+        {
+          method: "POST",
+          headers: authHeaders(),
+        },
+      );
+    } catch (error) {
+      throw new ApiError(formatApiError(error, API_BASE), {
+        cause: error,
+        isNetworkError: isNetworkFetchError(error),
+      });
+    }
+    if (response.status === 401) {
+      handleUnauthorized();
+    }
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Generate failed: ${response.status}`);
     }
     return response.json() as Promise<ContentProject>;
   },

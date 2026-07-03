@@ -145,7 +145,7 @@ class ContentPipeline:
             f"{skill}\n\n"
             "根据用户指令修改观察型初稿 Markdown，只改初稿，不涉及各平台格式。\n"
             f"{incorporate_hint}"
-            '输出 JSON：{"humanized":"完整修改后的 Markdown"}'
+            '只输出一个 JSON 对象，不要输出其它说明文字：{"humanized":"完整修改后的 Markdown"}'
         )
         user = (
             build_chat_context_block(project)
@@ -154,8 +154,8 @@ class ContentPipeline:
             f"元信息: {json.dumps(project.topic_meta.model_dump(mode='json'), ensure_ascii=False)}\n\n"
             f"当前初稿:\n{humanized}\n\n用户指令: {message}"
         )
-        raw = await self.llm.complete(system, user)
-        payload = parse_json_from_text(raw)
+        raw = await self.llm.complete(system, user, json_mode=True)
+        payload = parse_json_from_text(raw, fallback_key="humanized")
         updated = payload.get("humanized", humanized)
         return {"humanized": updated, "draft": updated}
 
@@ -175,7 +175,7 @@ class ContentPipeline:
         system = (
             f"{skill}\n\n"
             "执行 patch：根据用户指令修改 humanized 中间体 Markdown。"
-            "输出 JSON：{\"humanized\":\"完整修改后的 Markdown\"}"
+            '只输出一个 JSON 对象：{"humanized":"完整修改后的 Markdown"}'
         )
         targets = list(target_platforms) if target_platforms else ALL_PLATFORMS
         if "all" in targets:
@@ -188,8 +188,8 @@ class ContentPipeline:
             f"元信息: {json.dumps(project.topic_meta.model_dump(mode='json'), ensure_ascii=False)}\n\n"
             f"当前 humanized:\n{humanized}\n\n用户指令: {message}"
         )
-        raw = await self.llm.complete(system, user)
-        payload = parse_json_from_text(raw)
+        raw = await self.llm.complete(system, user, json_mode=True)
+        payload = parse_json_from_text(raw, fallback_key="humanized")
         updated_humanized = payload.get("humanized", humanized)
 
         patch: dict[str, Any] = {"humanized": updated_humanized, "draft": updated_humanized}
@@ -207,6 +207,135 @@ class ContentPipeline:
             )
 
         return patch
+
+    async def cascade_from_humanized(
+        self,
+        project: ContentProject,
+        style_profile: AuthorStyleProfile,
+        target_platforms: list[str],
+        on_delta: StreamCallback = None,
+    ) -> dict[str, Any]:
+        humanized = project.humanized or project.draft or project.inspiration
+        if not humanized.strip():
+            return {}
+
+        patch: dict[str, Any] = {}
+        for platform in target_platforms:
+            if platform not in PLATFORM_CONVERTERS:
+                continue
+            if on_delta:
+                await on_delta(f"正在同步{platform}版本…")
+            payload = await self._run_converter(
+                PLATFORM_CONVERTERS[platform],
+                project,
+                style_profile,
+                humanized,
+            )
+            if platform == "wechat" and project.cover_assets:
+                payload = finalize_wechat_content(
+                    payload,
+                    [a.model_dump(mode="json") for a in project.cover_assets],
+                )
+            patch[f"platforms.{platform}"] = payload
+        return patch
+
+    async def patch_platform_field(
+        self,
+        project: ContentProject,
+        style_profile: AuthorStyleProfile,
+        message: str,
+        platform: str,
+        fields: list[str],
+        on_delta: StreamCallback = None,
+    ) -> dict[str, Any]:
+        if on_delta:
+            await on_delta(f"正在精准修改{platform}…")
+
+        humanized = project.humanized or project.draft or project.inspiration
+        if platform == "wechat":
+            current = project.platforms["wechat"].model_dump(mode="json")
+            field_list = fields or ["body"]
+            schema_parts = []
+            if "title" in field_list:
+                schema_parts.append('"title":""')
+            if "body" in field_list:
+                schema_parts.append('"body":""')
+            schema = "{" + ",".join(schema_parts) + "}"
+            system = (
+                "你是公众号编辑。根据用户指令，仅修改指定字段，其他内容保持不变。\n"
+                f"输出 JSON：{schema}\n"
+                "body 若修改则输出完整 Markdown 正文；title 若修改则只输出新标题。"
+            )
+            user = (
+                self._style_block(style_profile, ["wechat"])
+                + f"\n\n中间体参考:\n{humanized[:1500]}\n\n"
+                f"当前标题: {current.get('title', '')}\n"
+                f"当前正文:\n{current.get('body', '')}\n\n"
+                f"用户指令: {message}"
+            )
+            raw = await self.llm.complete(system, user, json_mode=True)
+            payload = parse_json_from_text(raw, fallback_key=field_list[0] if len(field_list) == 1 else None)
+            merged = {**current, **{k: v for k, v in payload.items() if k in field_list and v}}
+            merged = self._normalize_wechat_payload(merged)
+            if project.cover_assets:
+                merged = finalize_wechat_content(
+                    merged,
+                    [a.model_dump(mode="json") for a in project.cover_assets],
+                )
+            return {"platforms.wechat": merged}
+
+        if platform == "xiaohongshu":
+            current = project.platforms["xiaohongshu"].model_dump(mode="json")
+            field_list = fields or ["body"]
+            schema_parts = []
+            if "title" in field_list:
+                schema_parts.append('"title":""')
+            if "body" in field_list:
+                schema_parts.append('"body":""')
+            if "tags" in field_list:
+                schema_parts.append('"tags":[]')
+            schema = "{" + ",".join(schema_parts) + "}"
+            system = (
+                "你是小红书编辑。根据用户指令，仅修改指定字段。\n"
+                f"输出 JSON：{schema}\n"
+                "body 保持短段落、每段 1-2 行、适度 emoji。"
+            )
+            user = (
+                self._style_block(style_profile, ["xiaohongshu"])
+                + f"\n\n中间体参考:\n{humanized[:1500]}\n\n"
+                f"当前: {json.dumps({k: current.get(k) for k in field_list}, ensure_ascii=False)}\n\n"
+                f"用户指令: {message}"
+            )
+            raw = await self.llm.complete(system, user, json_mode=True)
+            payload = parse_json_from_text(raw, fallback_key=field_list[0] if len(field_list) == 1 else None)
+            merged = {**current, **{k: v for k, v in payload.items() if k in field_list and v is not None}}
+            return {"platforms.xiaohongshu": merged}
+
+        if platform == "douyin":
+            current = project.platforms["douyin"].model_dump(mode="json")
+            field_list = fields or ["hook"]
+            if "body" in field_list or "script" in field_list:
+                field_list = ["hook", "script", "duration"]
+            schema = '{"hook":"","duration":"90s","script":[{"index":1,"duration":"3s","narration":"","visual":"","subtitle":""}]}'
+            system = (
+                "你是抖音脚本编辑。根据用户指令修改口播脚本指定部分。\n"
+                f"输出 JSON：{schema}"
+            )
+            user = (
+                self._style_block(style_profile, ["douyin"])
+                + f"\n\n中间体参考:\n{humanized[:1500]}\n\n"
+                f"当前脚本:\n{json.dumps(current, ensure_ascii=False)}\n\n"
+                f"用户指令: {message}"
+            )
+            raw = await self.llm.complete(system, user, json_mode=True)
+            payload = parse_json_from_text(raw)
+            merged = {**current}
+            for key in ("hook", "duration", "script"):
+                if key in payload and payload[key]:
+                    merged[key] = payload[key]
+            return {"platforms.douyin": merged}
+
+        return {}
 
     async def layout_wechat_images(
         self,
@@ -242,8 +371,8 @@ class ContentPipeline:
             f"已有素材:\n{json.dumps(assets_data, ensure_ascii=False)}\n\n"
             f"用户指令: {message or '请优化配图在正文中的位置与图注'}"
         )
-        raw = await self.llm.complete(system, user)
-        payload = parse_json_from_text(raw)
+        raw = await self.llm.complete(system, user, json_mode=True)
+        payload = parse_json_from_text(raw, fallback_key="body")
         wechat_data = wechat.model_dump(mode="json")
         wechat_data["body"] = payload.get("body", wechat.body)
         if payload.get("image_placements"):
@@ -295,7 +424,8 @@ class ContentPipeline:
             schema_hint = '{"title":"","body":"","tags":[]}'
         else:
             schema_hint = (
-                '{"title":"","summary":"","body":"","style_theme":{"accent":"","mood":"",'
+                '{"title":"","summary":"","body":"","style_theme":{"layout_preset":"classic|lively|story|checklist",'
+                '"accent":"","mood":"",'
                 '"heading_style":"border_left|underline|plain","quote_bg":"","quote_border":"",'
                 '"text_color":"","heading_color":""},'
                 '"image_placements":[{"after_paragraph":0,"asset_index":0,"caption":"","prompt":""}]}'
@@ -309,7 +439,7 @@ class ContentPipeline:
             f"{self._formatting_rules(skill_name)}"
         )
         user = f"中间体内容:\n{humanized}"
-        raw = await self.llm.complete(system, user)
+        raw = await self.llm.complete(system, user, json_mode=True)
         payload = parse_json_from_text(raw)
         if skill_name == "wechat-converter":
             payload = self._normalize_wechat_payload(payload)
@@ -331,7 +461,7 @@ class ContentPipeline:
             + f"\n请生成 {count} 个标题，避免: {style_profile.banned_phrases}\n\n"
             + humanized[:2000]
         )
-        raw = await self.llm.complete(system, user)
+        raw = await self.llm.complete(system, user, json_mode=True)
         payload = parse_json_from_text(raw)
         titles = payload.get("titles", [])
         return [
@@ -366,6 +496,7 @@ class ContentPipeline:
                     after_paragraph=p.after_paragraph,
                     caption=p.caption,
                     asset_index=p.asset_index,
+                    source="placeholder",
                 )
                 assets.append(asset.model_dump(mode="json"))
         else:
@@ -376,6 +507,7 @@ class ContentPipeline:
                 prompt="纪实风格，暖色乡村傍晚，真实生活场景，横版构图 2.35:1，主体居中便于方形裁切，不要明显 AI 感",
                 after_paragraph=-1,
                 asset_index=0,
+                source="placeholder",
             )
             assets.append(asset.model_dump(mode="json"))
 
@@ -385,6 +517,8 @@ class ContentPipeline:
         style_theme = payload.get("style_theme") or {}
         if not isinstance(style_theme, dict):
             style_theme = {}
+        if style_theme.get("layout_preset") not in {"classic", "lively", "story", "checklist"}:
+            style_theme["layout_preset"] = "classic"
         placements_raw = payload.get("image_placements") or []
         placements: list[dict[str, Any]] = []
         for index, item in enumerate(placements_raw[:4]):
@@ -399,7 +533,8 @@ class ContentPipeline:
 
         payload["style_theme"] = style_theme
         payload["image_placements"] = placements
-        payload["formatted_html"] = build_formatted_html(payload, [])
+        payload.pop("formatted_html", None)
+        payload["formatted_html"] = build_formatted_html(payload, [], force_rerender=True)
         return payload
 
     def _inject_image_placeholders(self, body: str, placements: list[dict[str, Any]]) -> str:
@@ -431,18 +566,23 @@ class ContentPipeline:
                 "- 用 ## 作为小节标题，标题与正文之间空一行\n"
                 "- 段落之间必须空一行，每段 2-4 句为宜\n"
                 "- 并列要点用「1. 2. 3.」有序列表，每项单独一行\n"
-                "- 引用/金句用 > 开头\n"
+                "- 引用/金句用 > 开头，引用块前后各空一行\n"
+                "- h2/h3 层级清晰，避免跳级\n"
                 "- 避免整篇一大段文字，保持公众号阅读节奏\n"
                 "- 在正文中用 ![图注](__IMAGE_N__) 标记配图位置（N 从 0 起）\n"
                 "- 根据文章调性输出 style_theme（accent/quote_bg 等 HEX 色值）\n"
+                "- style_theme.layout_preset 按调性选择：生活观察/周末随笔/情感叙事 → lively 或 story；"
+                "步骤清单/干货罗列 → checklist；严肃深度长文 → classic；未明确时 → classic\n"
+                "- checklist 预设下可用 > 💡 提示、> ⚠️ 警示 引导读者\n"
                 "- 输出 image_placements：2-3 处正文配图，含 after_paragraph、caption、prompt"
             )
         if skill_name == "xiaohongshu-converter":
             return (
                 "body 排版要求：\n"
-                "- 短段落，每段 1-2 句，段与段之间用 \\n\\n 分隔\n"
-                "- 口语化、有节奏感，适度使用 1-2 个 Emoji（不过密）\n"
+                "- 短段落，每段 1-2 句（不超过 2 行），段与段之间用 \\n\\n 分隔\n"
+                "- 口语化、有节奏感，适度使用 1-2 个 Emoji（不过密，每段最多 1 个）\n"
                 "- 可用「·」或短句分行制造呼吸感\n"
+                "- 用户若要求「每段不超过 2 行」，严格遵守\n"
                 "- 结尾留互动引导（如「你有同感吗？」）"
             )
         if skill_name == "douyin-converter":
@@ -450,7 +590,9 @@ class ContentPipeline:
                 "script 排版要求：\n"
                 "- 每镜 narration 控制在 1-2 句口播，口语化\n"
                 "- subtitle 为屏幕大字，8 字以内\n"
-                "- visual 描述具体画面，便于拍摄"
+                "- visual 描述具体画面，便于拍摄\n"
+                "- duration 字段与 script 各镜 duration 之和一致（如 90s 目标约 85-95s）\n"
+                "- 输出 duration 如 \"90s\"，各镜 duration 如 \"3s\"、\"8s\""
             )
         return ""
 

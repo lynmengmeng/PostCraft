@@ -491,6 +491,7 @@ AI写作工具那么多，到底该用哪个？测试了几个月的主流产品
   "summary": "120字以内摘要",
   "body": "Markdown 正文，含 ## 小标题、引用、列表",
   "style_theme": {
+    "layout_preset": "classic|lively|story|checklist",
     "accent": "#455548",
     "mood": "warm|cool|neutral|story|checklist",
     "heading_style": "border_left|underline|plain",
@@ -513,9 +514,11 @@ AI写作工具那么多，到底该用哪个？测试了几个月的主流产品
 **style_theme 规则：**
 
 - 根据文章调性自动选择配色，每篇可不同
-- 干货/清单类：`accent` 偏蓝绿，`mood`: `checklist`
-- 故事/观察类：`accent` 偏暖棕，`mood`: `story`
-- 深度长文：`heading_style`: `border_left`
+- `layout_preset`：生活观察/周末随笔/情感叙事 → `lively` 或 `story`；步骤清单/干货罗列 → `checklist`；严肃深度长文 → `classic`；未明确时 → `classic`
+- 干货/清单类：`accent` 偏蓝绿，`mood`: `checklist`，`layout_preset`: `checklist`
+- 故事/观察类：`accent` 偏暖棕，`mood`: `story`，`layout_preset`: `story` 或 `lively`
+- 深度长文：`heading_style`: `border_left`，`layout_preset`: `classic`
+- `checklist` 预设下可用 `> 💡` 提示、`> ⚠️` 警示引导读者
 
 **image_placements 规则：**
 

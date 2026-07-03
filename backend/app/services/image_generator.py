@@ -92,6 +92,27 @@ class ImageGenerator:
         path.write_bytes(base64.b64decode(image_b64))
         return f"/api/images/{filename}"
 
+    def slot_placeholder(self, aspect: CoverAspect = "wechat", *, caption: str = "待配图") -> str:
+        """Default slot image shown before user uploads or AI-generates."""
+        name = "slot-placeholder-wechat.svg" if aspect == "wechat" else "slot-placeholder-inline.svg"
+        path = self.output_dir / name
+        if path.exists():
+            return f"/api/images/{name}"
+        if aspect == "wechat":
+            width, height = 1280, 544
+        else:
+            width, height = 768, 1024
+        safe_caption = caption.replace("&", "&amp;").replace("<", "&lt;")[:24]
+        svg = f"""<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="{width}" height="{height}" fill="#fafaf9"/>
+  <rect x="32" y="32" width="{width - 64}" height="{height - 64}" rx="12" fill="#f5f5f4" stroke="#d6d3d1" stroke-dasharray="8 6"/>
+  <text x="{width // 2}" y="{height // 2 - 8}" fill="#78716c" font-size="26" text-anchor="middle" font-family="sans-serif">{safe_caption or "待配图"}</text>
+  <text x="{width // 2}" y="{height // 2 + 28}" fill="#a8a29e" font-size="15" text-anchor="middle" font-family="sans-serif">上传图片或 AI 生成</text>
+</svg>"""
+        path.write_text(svg, encoding="utf-8")
+        return f"/api/images/{name}"
+
     def _local_placeholder(self, aspect: CoverAspect = "wechat") -> str:
         filename = f"placeholder-{uuid4().hex}.svg"
         path = self.output_dir / filename

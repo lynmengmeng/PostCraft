@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from datetime import datetime
 from typing import Any, Awaitable, Callable
@@ -47,6 +48,25 @@ from app.skill_pipelines import ALL_PLATFORMS
 StreamCallback = Callable[[str], Awaitable[None]] | None
 
 
+def _has_platform_content(project: ContentProject) -> bool:
+    return bool(
+        project.platforms["wechat"].body
+        or project.platforms["xiaohongshu"].body
+        or project.platforms["douyin"].script
+    )
+
+
+def _cover_style_hint(message: str) -> str:
+    hints: list[str] = []
+    if re.search(r"暖色", message):
+        hints.append("暖色调")
+    if re.search(r"纪实", message):
+        hints.append("纪实摄影风格")
+    if re.search(r"少.*AI|不要.*AI|真实", message):
+        hints.append("真实自然，不要明显 AI 感")
+    return "，".join(hints) if hints else "纪实风格，暖色生活场景，真实自然，不要明显 AI 感"
+
+
 class ChatOrchestrator:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -75,6 +95,12 @@ class ChatOrchestrator:
             attachment_urls=attachment_urls,
         )
         user_content = message.strip() or self._default_user_label(parsed)
+        if (
+            not message.strip()
+            and parsed.intent == "generate_draft"
+            and project.inspiration.strip()
+        ):
+            user_content = project.inspiration.strip()
         if attachment_urls:
             user_content += f"\n[附件: {', '.join(attachment_urls)}]"
         project.chat_history.append(
@@ -114,6 +140,48 @@ class ChatOrchestrator:
         updated.risk_warnings = self._build_warnings(updated, style_profile)
         if updated.risk_warnings and patch.intent != "fact_check":
             patch.summary += f" 检测到 {len(updated.risk_warnings)} 处表述风险，请在内容区查看。"
+        assistant = ChatMessage(role="assistant", content=patch.summary)
+        updated.chat_history.append(assistant)
+        return updated, patch, assistant
+
+    async def handle_cascade(
+        self,
+        project: ContentProject,
+        target_platforms: list[str],
+        style_profile: AuthorStyleProfile,
+        on_delta: StreamCallback = None,
+    ) -> tuple[ContentProject, ContentPatch, ChatMessage]:
+        targets = [p for p in target_platforms if p in ALL_PLATFORMS] or ALL_PLATFORMS
+        if not (project.humanized or project.draft):
+            patch = ContentPatch(
+                intent="cascade",
+                target_platforms=targets,  # type: ignore[arg-type]
+                summary="请先完善初稿，再同步到平台。",
+                patch={},
+            )
+            assistant = ChatMessage(role="assistant", content=patch.summary)
+            project.chat_history.append(assistant)
+            return project, patch, assistant
+
+        if self.llm.status().configured:
+            patch_data = await self.pipeline.cascade_from_humanized(
+                project, style_profile, list(targets), on_delta=on_delta
+            )
+        else:
+            mock = build_mock_platforms(project, list(targets))
+            patch_data = mock.patch
+
+        self._snapshot(project, "同步平台版本")
+        patch = ContentPatch(
+            intent="cascade",
+            target_platforms=targets,  # type: ignore[arg-type]
+            summary=f"已根据当前初稿同步到：{'、'.join(targets)}。",
+            patch=patch_data,
+            changes=self._changes_from_patch(patch_data),
+        )
+        updated = apply_patch(project, patch)
+        updated.updated_at = datetime.utcnow()
+        updated.risk_warnings = self._build_warnings(updated, style_profile)
         assistant = ChatMessage(role="assistant", content=patch.summary)
         updated.chat_history.append(assistant)
         return updated, patch, assistant
@@ -323,7 +391,7 @@ class ChatOrchestrator:
                 label = "、".join(targets)
                 summary = f"已根据当前初稿生成 {label} 内容。"
                 if not project.cover_assets and patch_data.get("cover_assets"):
-                    summary += " 已同步生成封面与配图。"
+                    summary += " 已同步生成封面与配图占位。"
                 return ContentPatch(
                     intent="generate_platform",
                     target_platforms=targets,  # type: ignore[arg-type]
@@ -352,29 +420,98 @@ class ChatOrchestrator:
                 )
             return build_mock_titles(project, parsed.title_count)
 
-        if parsed.intent == "cover_assets":
+        if parsed.intent == "cover_assets" or parsed.intent == "regenerate_cover":
+            style_hint = _cover_style_hint(message)
             if self.llm.status().configured:
                 platforms = {
                     k: v.model_dump(mode="json") for k, v in project.platforms.items()
                 }
                 assets = await self.pipeline._generate_cover_prompts(project, style_profile, platforms)
+                for asset in assets:
+                    base = asset.get("prompt") or ""
+                    asset["prompt"] = f"{style_hint}。{base}" if base else style_hint
+                    asset["source"] = "placeholder"
+                    asset.pop("image_url", None)
                 patch_data = {"cover_assets": assets}
-                patch_data = await self._attach_cover_images(patch_data)
+                patch_data = self._assign_placeholder_images(patch_data)
                 wechat = project.platforms.get("wechat")
                 if wechat and wechat.body:
                     patch_data["platforms.wechat"] = finalize_wechat_content(
                         wechat.model_dump(mode="json"),
                         patch_data.get("cover_assets") or [],
                     )
+                summary = (
+                    "已按你的风格要求更新封面与配图方案（默认占位）。"
+                    "确认正文后可在配图区逐张上传或 AI 生成。"
+                    if parsed.intent == "regenerate_cover"
+                    else "已生成封面文案与配图提示词（默认占位）。确认内容后请逐张上传或 AI 生成。"
+                )
                 return ContentPatch(
                     intent="cover_assets",
                     target_platforms=["all"],
-                    summary="已生成封面文案、配图提示词与封面图。",
+                    summary=summary,
                     patch=patch_data,
                 )
             patch = build_mock_cover_assets(project)
-            patch_data = await self._attach_cover_images(patch.patch)
+            patch_data = self._assign_placeholder_images(patch.patch)
             patch.patch = patch_data
+            return patch
+
+        if parsed.intent == "layout_preset":
+            wechat = project.platforms.get("wechat")
+            if not wechat or not (wechat.body or "").strip():
+                return ContentPatch(
+                    intent="layout_preset",
+                    target_platforms=["wechat"],
+                    summary="请先生成公众号内容，再切换排版预设。",
+                    patch={},
+                )
+            preset = parsed.layout_preset or "classic"
+            wechat_data = wechat.model_dump(mode="json")
+            style_theme = dict(wechat_data.get("style_theme") or {})
+            style_theme["layout_preset"] = preset
+            wechat_data["style_theme"] = style_theme
+            assets = [a.model_dump(mode="json") for a in project.cover_assets]
+            finalized = finalize_wechat_content(wechat_data, assets)
+            preset_labels = {
+                "classic": "经典",
+                "lively": "活泼",
+                "story": "故事",
+                "checklist": "清单",
+            }
+            label = preset_labels.get(preset, preset)
+            patch = {"platforms.wechat": finalized}
+            return ContentPatch(
+                intent="layout_preset",
+                target_platforms=["wechat"],
+                summary=f"已切换为{label}排版，正文未改动。",
+                patch=patch,
+                changes=self._changes_from_patch(patch),
+            )
+
+        if parsed.intent == "patch_field":
+            targets = [p for p in parsed.target_platforms if p in ALL_PLATFORMS]
+            platform = targets[0] if targets else "wechat"
+            fields = parsed.patch_fields or ["body"]
+            if self.llm.status().configured:
+                patch_data = await self.pipeline.patch_platform_field(
+                    project,
+                    style_profile,
+                    message,
+                    str(platform),
+                    fields,
+                    on_delta=on_delta,
+                )
+                field_label = "、".join(fields)
+                return ContentPatch(
+                    intent="patch_field",
+                    target_platforms=[platform],  # type: ignore[list-item]
+                    summary=f"已精准修改{platform}的{field_label}。",
+                    patch=patch_data,
+                    changes=self._changes_from_patch(patch_data),
+                )
+            patch = build_mock_platforms(project, [str(platform)])
+            patch.summary = f"已更新{platform}内容模板。"
             return patch
 
         if parsed.intent == "layout_images":
@@ -450,16 +587,23 @@ class ChatOrchestrator:
             return patch
 
         if parsed.intent == "refine_draft":
+            hints = ["cascade_available"] if _has_platform_content(project) else []
             if self.llm.status().configured:
                 patch_data = await self.pipeline.refine_draft(
                     project, style_profile, message, on_delta=on_delta
                 )
+                summary = (
+                    "已更新初稿。请选择是否同步到已有平台版本。"
+                    if hints
+                    else "已更新初稿。满意后可生成各平台内容。"
+                )
                 return ContentPatch(
                     intent="refine_draft",
                     target_platforms=[],
-                    summary="已更新初稿。满意后可生成各平台内容。",
+                    summary=summary,
                     patch=patch_data,
                     changes=self._changes_from_patch(patch_data),
+                    preview_hints=hints,
                 )
             return build_mock_refine_draft(project, message)
 
@@ -467,12 +611,14 @@ class ChatOrchestrator:
             patch_data = await self.pipeline.refine_draft(
                 project, style_profile, message, on_delta=on_delta
             )
+            hints = ["cascade_available"] if _has_platform_content(project) else []
             return ContentPatch(
                 intent="refine_draft",
                 target_platforms=[],
                 summary="已更新初稿。",
                 patch=patch_data,
                 changes=self._changes_from_patch(patch_data),
+                preview_hints=hints,
             )
 
         fallback = build_mock_refine_draft(project, message)
@@ -508,7 +654,7 @@ class ChatOrchestrator:
         platforms = self._platform_dict_from_patch(project, patch_data)
         if not platforms:
             return patch_data
-        result = await self._attach_cover_images(
+        result = self._assign_placeholder_images(
             {
                 **patch_data,
                 "cover_assets": await self.pipeline._generate_cover_prompts(
@@ -519,6 +665,42 @@ class ChatOrchestrator:
             }
         )
         return self._finalize_wechat_in_patch(result)
+
+    def _assign_placeholder_images(self, patch_data: dict[str, Any]) -> dict[str, Any]:
+        assets = patch_data.get("cover_assets") or []
+        if not assets:
+            return patch_data
+
+        updated_assets: list[dict[str, Any]] = []
+        cover_url = ""
+        for index, asset in enumerate(assets):
+            if asset.get("image_url") and asset.get("source") not in ("placeholder", None):
+                updated_assets.append(asset)
+                if index == 0 or (asset.get("after_paragraph") is not None and asset.get("after_paragraph", 0) < 0):
+                    cover_url = asset.get("image_url") or cover_url
+                continue
+
+            after_paragraph = asset.get("after_paragraph", -1)
+            is_cover = after_paragraph is None or after_paragraph < 0
+            aspect = "wechat" if is_cover else "xhs"
+            caption = asset.get("caption") or asset.get("subheadline") or "待配图"
+            placeholder_url = self.images.slot_placeholder(aspect, caption=str(caption)[:24])
+            updated = {
+                **asset,
+                "image_url": placeholder_url,
+                "source": "placeholder",
+            }
+            updated_assets.append(updated)
+            if is_cover:
+                cover_url = placeholder_url
+
+        patch_data["cover_assets"] = updated_assets
+        if cover_url:
+            if "platforms.xiaohongshu" in patch_data and isinstance(patch_data["platforms.xiaohongshu"], dict):
+                patch_data["platforms.xiaohongshu"]["cover_image"] = cover_url
+            elif "platforms.xiaohongshu" not in patch_data:
+                patch_data["platforms.xiaohongshu.cover_image"] = cover_url
+        return patch_data
 
     def _finalize_wechat_in_patch(
         self,
@@ -534,7 +716,12 @@ class ChatOrchestrator:
         )
         return patch_data
 
-    async def _attach_cover_images(self, patch_data: dict[str, Any]) -> dict[str, Any]:
+    async def _attach_cover_images(
+        self,
+        patch_data: dict[str, Any],
+        *,
+        only_uploaded: bool = False,
+    ) -> dict[str, Any]:
         assets = patch_data.get("cover_assets") or []
         if not assets:
             return patch_data
@@ -546,18 +733,21 @@ class ChatOrchestrator:
                 updated_assets.append(asset)
                 image_url = asset.get("image_url") or image_url
                 continue
-            if asset.get("image_url"):
+            if only_uploaded:
+                updated_assets.append(asset)
+                if asset.get("image_url") and asset.get("source") != "placeholder":
+                    image_url = asset.get("image_url") or image_url
+                continue
+            if asset.get("image_url") and asset.get("source") != "placeholder":
                 updated_assets.append(asset)
                 image_url = asset.get("image_url") or image_url
                 continue
             prompt = asset.get("prompt", "纪实风格封面")
             after_paragraph = asset.get("after_paragraph", -1)
             is_cover = after_paragraph is None or after_paragraph < 0
-            if not is_cover and index == 0:
-                is_cover = True
             aspect = "wechat" if is_cover else "xhs"
             image_url = await self.images.generate(prompt, aspect=aspect)
-            asset = {**asset, "image_url": image_url}
+            asset = {**asset, "image_url": image_url, "source": "generated"}
             updated_assets.append(asset)
 
         patch_data["cover_assets"] = updated_assets

@@ -2,6 +2,23 @@ import type { ContentProject, CoverAsset } from "./types";
 
 const IMAGE_MD_RE = /!\[([^\]]*)\]\(([^)]+)\)/g;
 
+export function getCoverAssetByIndex(
+  assets: CoverAsset[],
+  assetIndex: number,
+): CoverAsset | undefined {
+  const byIndex = assets.find((a) => a.asset_index === assetIndex);
+  if (byIndex) return byIndex;
+  return assets[assetIndex];
+}
+
+export function isPlaceholderAsset(asset: CoverAsset): boolean {
+  return asset.source === "placeholder";
+}
+
+export function hasRealImage(asset: CoverAsset): boolean {
+  return Boolean(asset.image_url && asset.source !== "placeholder");
+}
+
 export function nextAssetIndex(assets: CoverAsset[]): number {
   if (assets.length === 0) return 0;
   const indices = assets.map((asset, index) =>
@@ -34,7 +51,7 @@ export function syncImagePlacementsFromBody(
     const assetIndex = placeholder ? Number(placeholder[1]) : placements.length;
     const before = body.slice(0, match.index);
     const afterParagraph = before.split("\n\n").filter((p) => p.trim()).length;
-    const asset = coverAssets.find((a) => (a.asset_index ?? 0) === assetIndex);
+    const asset = getCoverAssetByIndex(coverAssets, assetIndex);
     placements.push({
       after_paragraph: afterParagraph,
       asset_index: assetIndex,
@@ -54,6 +71,6 @@ export function createEmptyAssetSlot(index: number, caption = "配图"): CoverAs
     prompt: "待上传或 AI 生成",
     caption,
     asset_index: index,
-    source: "upload",
+    source: "placeholder",
   };
 }

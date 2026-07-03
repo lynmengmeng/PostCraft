@@ -40,7 +40,8 @@ export default function RootLayout({
   return (
     <html
       lang="zh-CN"
-      className={`${jakarta.variable} ${manrope.variable} ${playfair.variable} h-full antialiased`}
+      className={`${jakarta.variable} ${manrope.variable} ${playfair.variable} notranslate h-full antialiased`}
+      translate="no"
     >
       <head>
         <meta name="google" content="notranslate" />
@@ -49,7 +50,7 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-full bg-background text-on-surface">
+      <body className="notranslate min-h-full overflow-x-hidden bg-background text-on-surface" translate="no">
         <AuthProvider>
           <AppShell>{children}</AppShell>
         </AuthProvider>

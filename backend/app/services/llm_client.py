@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from openai import APIStatusError, AsyncOpenAI
 
@@ -68,6 +68,7 @@ class LLMClient:
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.7,
+        json_mode: bool = False,
     ) -> str:
         if not self._configs:
             return json.dumps(
@@ -85,19 +86,39 @@ class LLMClient:
         last_exc: Exception | None = None
         for provider, api_key, base_url, model in self._configs:
             client = self._build_client(provider, api_key, base_url)
-            try:
-                response = await client.chat.completions.create(
-                    model=model,
-                    temperature=temperature,
-                    messages=messages,
-                )
-                return response.choices[0].message.content or ""
-            except APIStatusError as exc:
-                last_exc = exc
-                logger.warning("LLM provider %r failed (%s), trying fallback", provider, exc)
-            except Exception as exc:
-                last_exc = exc
-                logger.warning("LLM provider %r failed (%s), trying fallback", provider, exc)
+            for use_json_mode in ([True, False] if json_mode else [False]):
+                try:
+                    kwargs: dict[str, Any] = {
+                        "model": model,
+                        "temperature": temperature,
+                        "messages": messages,
+                    }
+                    if use_json_mode:
+                        kwargs["response_format"] = {"type": "json_object"}
+                    response = await client.chat.completions.create(**kwargs)
+                    return response.choices[0].message.content or ""
+                except APIStatusError as exc:
+                    last_exc = exc
+                    if use_json_mode:
+                        logger.warning(
+                            "LLM provider %r json_mode failed (%s), retrying plain",
+                            provider,
+                            exc,
+                        )
+                        continue
+                    logger.warning("LLM provider %r failed (%s), trying fallback", provider, exc)
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    if use_json_mode:
+                        logger.warning(
+                            "LLM provider %r json_mode failed (%s), retrying plain",
+                            provider,
+                            exc,
+                        )
+                        continue
+                    logger.warning("LLM provider %r failed (%s), trying fallback", provider, exc)
+                    break
 
         if last_exc:
             raise last_exc

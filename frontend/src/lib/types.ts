@@ -9,7 +9,10 @@ export interface DouyinScene {
   subtitle: string;
 }
 
+export type WechatLayoutPreset = "classic" | "lively" | "story" | "checklist";
+
 export interface WechatStyleTheme {
+  layout_preset?: WechatLayoutPreset;
   accent: string;
   mood: string;
   heading_style: "border_left" | "underline" | "plain";
@@ -73,7 +76,7 @@ export interface CoverAsset {
   after_paragraph?: number;
   caption?: string;
   asset_index?: number;
-  source?: "generated" | "upload";
+  source?: "generated" | "upload" | "placeholder";
 }
 
 export interface ChatMessage {
@@ -96,6 +99,8 @@ export interface RiskWarning {
   phrase: string;
   suggestion: string;
   source: string;
+  suggested_insert?: string;
+  warning_type?: string;
 }
 
 export interface PublishRecord {
@@ -106,6 +111,23 @@ export interface PublishRecord {
   status: "pending" | "published" | "skipped";
   note: string;
 }
+
+export interface ProjectDraftExport {
+  version: 1;
+  kind: "draft";
+  exported_at: string;
+  source_env?: string;
+  title: string;
+  inspiration: string;
+  topic_meta: TopicMeta;
+  content_pillar: string;
+  draft: string;
+  humanized: string;
+  chat_summary: string;
+  chat_summary_through: number;
+}
+
+export type ProjectDraftImportPayload = Omit<ProjectDraftExport, "exported_at">;
 
 export interface ContentProject {
   id: string;

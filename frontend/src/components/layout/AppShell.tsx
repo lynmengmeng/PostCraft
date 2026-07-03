@@ -89,7 +89,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <ShellContext.Provider value={{ zenMode, setZenMode, searchQuery, setSearchQuery }}>
-      <div className="min-h-screen bg-background">
+      <div className={`bg-background ${isCreatePage ? "h-screen overflow-hidden" : "min-h-screen"}`}>
         {/* SideNav */}
         <aside
           className={`fixed left-0 top-0 bottom-0 z-50 flex h-screen w-sidebar flex-col border-r border-outline-variant/30 bg-surface transition-transform duration-500 ${
@@ -223,8 +223,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         {/* Main */}
         <main
-          className={`min-h-screen pt-16 transition-[margin] duration-500 ${
+          className={`transition-[margin] duration-500 ${
             zenMode ? "ml-0" : "ml-sidebar"
+          } ${
+            isCreatePage
+              ? "flex h-screen flex-col overflow-hidden pt-16"
+              : "min-h-screen pt-16"
           }`}
         >
           {children}

@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { resolveImageUrl } from "@/lib/export";
+import { editableInputClassName, editableInputProps } from "@/lib/editable-input";
 
 interface ChatComposerProps {
   message: string;
@@ -22,17 +23,36 @@ export function ChatComposer({
   onUploadAsset,
 }: ChatComposerProps) {
   const chatFileRef = useRef<HTMLInputElement>(null);
+  const composingRef = useRef(false);
+  const [localMessage, setLocalMessage] = useState(message);
+  const localMessageRef = useRef(localMessage);
+  localMessageRef.current = localMessage;
+
+  useEffect(() => {
+    if (composingRef.current) return;
+    if (message !== localMessageRef.current) {
+      setLocalMessage(message);
+    }
+  }, [message]);
+
+  function commitMessage(value: string) {
+    setLocalMessage(value);
+    onMessageChange(value);
+  }
 
   async function submit() {
-    if (sending) return;
-    const text = message.trim();
+    if (sending || composingRef.current) return;
+    const text = localMessage.trim();
     if (!text && pendingAttachments.length === 0) return;
     const ok = await onSend(text);
-    if (ok) onMessageChange("");
+    if (ok) {
+      setLocalMessage("");
+      onMessageChange("");
+    }
   }
 
   return (
-    <div className="space-y-3" translate="no">
+    <div className={`space-y-3 ${editableInputClassName}`} translate="no">
       {pendingAttachments.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {pendingAttachments.map((url) => (
@@ -54,21 +74,30 @@ export function ChatComposer({
       )}
       <div className="relative">
         <textarea
-          value={message}
-          onChange={(e) => onMessageChange(e.target.value)}
+          value={localMessage}
+          onChange={(e) => {
+            const next = e.target.value;
+            setLocalMessage(next);
+            if (!composingRef.current) {
+              onMessageChange(next);
+            }
+          }}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={(e) => {
+            composingRef.current = false;
+            commitMessage(e.currentTarget.value);
+          }}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !composingRef.current) {
               e.preventDefault();
               void submit();
             }
           }}
           placeholder="继续打磨初稿、调整配图位置，或上传素材后说明插入位置…"
-          className="notranslate h-20 w-full resize-none rounded-xl border border-outline-variant/20 bg-surface-container-low p-3 pr-20 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-          translate="no"
-          spellCheck={false}
-          autoCorrect="off"
-          autoCapitalize="off"
-          lang="zh-CN"
+          className={`${editableInputClassName} h-20 w-full resize-none rounded-xl border border-outline-variant/20 bg-surface-container-low p-3 pr-20 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary`}
+          {...editableInputProps}
         />
         <div className="pointer-events-none absolute bottom-2 right-2 flex items-center gap-1">
           <button

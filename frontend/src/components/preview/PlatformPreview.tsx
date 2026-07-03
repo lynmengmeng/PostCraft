@@ -1,34 +1,59 @@
-import type { ContentProject, Platform } from "@/lib/types";
+"use client";
+
+import type { ContentProject, DouyinScene, Platform } from "@/lib/types";
 import { platformLabels } from "@/lib/api";
 import { resolveImageUrl } from "@/lib/export";
 import { renderXhsBody } from "@/lib/markdown";
 import {
   getWechatPlainText,
+  LAYOUT_PRESET_LABELS,
   normalizeStyleTheme,
-  renderWechatBodyInlineHtml,
   renderWechatCopyHtml,
 } from "@/lib/wechat-html";
+import { WechatPreviewBody } from "./WechatPreviewBody";
+
+function parseDurationSec(value: string): number {
+  const match = value.match(/(\d+)/);
+  return match ? parseInt(match[1], 10) : 0;
+}
+
+function totalScriptSeconds(script: DouyinScene[]): number {
+  return script.reduce((sum, scene) => sum + parseDurationSec(scene.duration), 0);
+}
+
+const PREVIEW_DISCLAIMER = "近似预览效果，以各平台实际展示为准。";
 
 export function WechatPreview({
   content,
   coverAssets = [],
+  projectId,
+  onProjectUpdate,
 }: {
   content: ContentProject["platforms"]["wechat"];
   coverAssets?: ContentProject["cover_assets"];
+  projectId?: string;
+  onProjectUpdate?: (project: ContentProject) => void;
 }) {
   const theme = normalizeStyleTheme(content.style_theme);
   const accent = theme.accent;
-  const summaryStyle = {
-    borderLeftColor: "#fbbf24",
-    background: "#fffbeb",
-  };
+  const preset = theme.layout_preset || "classic";
+  const summaryStyle =
+    preset === "classic"
+      ? { borderLeftColor: "#fbbf24", background: "#fffbeb" }
+      : {
+          borderLeftColor: theme.quote_border,
+          background: theme.quote_bg,
+        };
 
   return (
     <div className="wechat-preview mx-auto max-w-[480px] overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm">
       <div className="border-b border-stone-100 bg-stone-50 px-5 py-3 text-xs tracking-wide text-stone-400">
         公众号预览
+        <span className="ml-2 rounded-full bg-stone-200/80 px-2 py-0.5 text-[10px] text-stone-600">
+          {LAYOUT_PRESET_LABELS[preset]}
+        </span>
         {theme.mood && (
-          <span className="ml-2 rounded-full bg-stone-200/80 px-2 py-0.5 text-[10px] text-stone-600">
+          <span className="ml-1 rounded-full bg-stone-200/80 px-2 py-0.5 text-[10px] text-stone-600">
             {theme.mood}
           </span>
         )}
@@ -45,20 +70,18 @@ export function WechatPreview({
             {content.summary}
           </p>
         )}
-        <div
-          className="article-body mt-6 text-[16px] text-stone-800"
-          style={{ ["--wechat-accent" as string]: accent }}
-          dangerouslySetInnerHTML={{
-            __html: renderWechatBodyInlineHtml(
-              content.body || "正文待生成",
-              theme,
-              coverAssets,
-              resolveImageUrl,
-            ),
-          }}
-        />
+        <div className="mt-6" style={{ ["--wechat-accent" as string]: accent }}>
+          <WechatPreviewBody
+            body={content.body || "正文待生成"}
+            theme={theme}
+            coverAssets={coverAssets}
+            projectId={projectId}
+            onProjectUpdate={onProjectUpdate}
+          />
+        </div>
         <p className="mt-6 rounded-lg bg-stone-50 px-3 py-2 text-xs leading-relaxed text-stone-500">
-          近似预览效果，以公众号后台为准。请使用顶栏「复制富文本」粘贴到 mp.weixin.qq.com；若图片不显示，请从配图清单下载后手动上传。
+          {PREVIEW_DISCLAIMER}
+          配图占位可直接在上方点击「上传图片」或「AI 生成」；复制富文本请用顶栏按钮。
         </p>
       </div>
     </div>
@@ -117,12 +140,16 @@ export function XiaohongshuPreview({
             ))}
           </div>
         )}
+        <p className="mt-4 text-xs leading-relaxed text-stone-400">{PREVIEW_DISCLAIMER}</p>
       </div>
     </div>
   );
 }
 
 export function DouyinPreview({ content }: { content: ContentProject["platforms"]["douyin"] }) {
+  const targetSec = parseDurationSec(content.duration || "90s");
+  const scriptSec = totalScriptSeconds(content.script || []);
+  const durationMismatch = scriptSec > 0 && Math.abs(scriptSec - targetSec) > 10;
   return (
     <div className="rounded-2xl border border-stone-200 bg-white shadow-sm">
       <div className="border-b border-stone-100 px-4 py-3 text-xs tracking-wide text-stone-400">
@@ -132,8 +159,20 @@ export function DouyinPreview({ content }: { content: ContentProject["platforms"
         <div className="rounded-xl bg-gradient-to-br from-stone-900 to-stone-800 p-5 text-white">
           <div className="text-xs uppercase tracking-wider text-stone-400">3 秒钩子</div>
           <div className="mt-2 text-xl font-semibold leading-snug">{content.hook || "钩子待生成"}</div>
-          <div className="mt-3 inline-block rounded-full bg-white/10 px-3 py-1 text-xs text-stone-300">
-            预计时长 {content.duration || "90s"}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="inline-block rounded-full bg-white/10 px-3 py-1 text-xs text-stone-300">
+              目标时长 {content.duration || "90s"}
+            </span>
+            {scriptSec > 0 && (
+              <span
+                className={`inline-block rounded-full px-3 py-1 text-xs ${
+                  durationMismatch ? "bg-amber-500/20 text-amber-200" : "bg-white/10 text-stone-300"
+                }`}
+              >
+                分镜合计 {scriptSec}s
+                {durationMismatch ? "（与目标偏差较大）" : ""}
+              </span>
+            )}
           </div>
         </div>
 
@@ -162,6 +201,7 @@ export function DouyinPreview({ content }: { content: ContentProject["platforms"
             </div>
           ))}
         </div>
+        <p className="mt-4 text-xs leading-relaxed text-stone-400">{PREVIEW_DISCLAIMER}</p>
       </div>
     </div>
   );
@@ -170,15 +210,19 @@ export function DouyinPreview({ content }: { content: ContentProject["platforms"
 export function PreviewPanel({
   project,
   platform,
+  onProjectUpdate,
 }: {
   project: ContentProject;
   platform: Platform;
+  onProjectUpdate?: (project: ContentProject) => void;
 }) {
   if (platform === "wechat") {
     return (
       <WechatPreview
         content={project.platforms.wechat}
         coverAssets={project.cover_assets}
+        projectId={project.id}
+        onProjectUpdate={onProjectUpdate}
       />
     );
   }

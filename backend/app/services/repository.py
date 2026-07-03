@@ -345,11 +345,84 @@ def _set_path(data: dict[str, Any], path: str, value: Any) -> None:
     cursor[parts[-1]] = value
 
 
-def parse_json_from_text(text: str) -> dict[str, Any]:
-    fenced = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
-    candidate = fenced.group(1) if fenced else text
-    start = candidate.find("{")
-    end = candidate.rfind("}")
-    if start == -1 or end == -1:
+def _strip_code_fences(text: str) -> str:
+    stripped = text.strip()
+    for pattern in (
+        r"```json\s*(.*?)\s*```",
+        r"```JSON\s*(.*?)\s*```",
+        r"```\s*(.*?)\s*```",
+    ):
+        match = re.search(pattern, stripped, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+    return stripped
+
+
+def _extract_balanced_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return None
+
+
+def _try_load_json_dict(blob: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(blob)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def parse_json_from_text(text: str, *, fallback_key: str | None = None) -> dict[str, Any]:
+    """Extract a JSON object from LLM output; optional fallback wraps plain text."""
+    if not text or not text.strip():
+        if fallback_key:
+            return {fallback_key: ""}
         raise ValueError("No JSON object found in model output")
-    return json.loads(candidate[start : end + 1])
+
+    candidates: list[str] = []
+    for variant in (text, _strip_code_fences(text)):
+        if variant not in candidates:
+            candidates.append(variant)
+
+    for candidate in candidates:
+        blob = _extract_balanced_json_object(candidate)
+        if not blob:
+            continue
+        loaded = _try_load_json_dict(blob)
+        if loaded is not None:
+            return loaded
+
+    if fallback_key and "{" not in text:
+        cleaned = _strip_code_fences(text).strip()
+        if cleaned:
+            return {fallback_key: cleaned}
+
+    if fallback_key:
+        cleaned = _strip_code_fences(text).strip()
+        if cleaned:
+            return {fallback_key: cleaned}
+
+    raise ValueError("No JSON object found in model output")

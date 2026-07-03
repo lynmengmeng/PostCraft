@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.models.schemas import Platform
 
@@ -12,6 +12,16 @@ class ParsedIntent:
     target_platforms: list[Platform | str]
     constraints: list[str]
     title_count: int = 10
+    patch_fields: list[str] = field(default_factory=list)
+    layout_preset: str | None = None
+
+
+LAYOUT_PRESET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"排版.*活泼|活泼一点|更活泼|活泼.*排版"), "lively"),
+    (re.compile(r"清单风|干货清单|换成清单|清单.*排版"), "checklist"),
+    (re.compile(r"故事风|叙事排版|故事.*排版|换成故事"), "story"),
+    (re.compile(r"恢复经典|经典排版|换回经典|经典.*排版"), "classic"),
+]
 
 
 # 已有初稿时，较长消息视为补充素材/修改意见，优先 refine 而非误触 fact_check
@@ -30,6 +40,7 @@ QUICK_INTENTS = [
     (re.compile(r"生成抖音|抖音版本|口播脚本|转成抖音"), "generate_platform", ["douyin"]),
     (re.compile(r"撤销|回退|上一版"), "rollback", []),
     (re.compile(r"调整配图|配图位置|移动.*图|图.*移到|重新排版.*图|插入配图|图片位置"), "layout_images", []),
+    (re.compile(r"封面.*暖色|暖色.*封面|纪实.*封面|封面.*纪实|少.*AI|重新.*封面|封面.*风格"), "regenerate_cover", []),
     (re.compile(r"封面|配图"), "cover_assets", []),
     (re.compile(r"同步.*平台|更新.*平台"), "patch_platform", []),
 ]
@@ -59,6 +70,15 @@ def parse_intent(
     text = message.strip()
     narrative_refine = has_draft and len(text) >= NARRATIVE_REFINE_THRESHOLD
 
+    for pattern, preset in LAYOUT_PRESET_PATTERNS:
+        if pattern.search(text):
+            return ParsedIntent(
+                intent="layout_preset",
+                target_platforms=["wechat"],
+                constraints=[],
+                layout_preset=preset,
+            )
+
     for pattern, intent, constraints in QUICK_INTENTS:
         match = pattern.search(text)
         if not match:
@@ -84,6 +104,22 @@ def parse_intent(
         return ParsedIntent("fact_check", [], [])
 
     if not narrative_refine:
+        if re.search(r"只改.*标题|改一下标题|修改标题|标题改|换个标题", text):
+            return ParsedIntent(
+                "patch_field",
+                _resolve_platforms(text, selected_platform),
+                [],
+                patch_fields=["title"],
+            )
+        if re.search(r"只改.*标签|改.*话题|标签改|换.*标签", text):
+            return ParsedIntent("patch_field", ["xiaohongshu"], [], patch_fields=["tags"])
+        if re.search(r"只改.*正文|改.*段落|缩短.*段|正文改|改一下正文", text):
+            return ParsedIntent(
+                "patch_field",
+                _resolve_platforms(text, selected_platform),
+                [],
+                patch_fields=["body"],
+            )
         if re.search(r"只改|仅改|(?:^|[，。！？\s])公众号", text):
             return ParsedIntent("patch_platform", ["wechat"], [])
         if re.search(r"只改|仅改|小红书|笔记", text):

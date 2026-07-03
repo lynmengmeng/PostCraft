@@ -13,6 +13,7 @@ def new_id() -> str:
 
 
 Platform = Literal["wechat", "xiaohongshu", "douyin"]
+WechatLayoutPreset = Literal["classic", "lively", "story", "checklist"]
 ProjectStatus = Literal["draft", "ready", "published"]
 PublishStatus = Literal["pending", "published", "skipped"]
 
@@ -26,6 +27,7 @@ class DouyinScene(BaseModel):
 
 
 class WechatStyleTheme(BaseModel):
+    layout_preset: WechatLayoutPreset = "classic"
     accent: str = "#455548"
     mood: str = "warm"
     heading_style: str = "border_left"
@@ -89,7 +91,7 @@ class CoverAsset(BaseModel):
     after_paragraph: int = -1
     caption: str = ""
     asset_index: int = 0
-    source: Literal["generated", "upload"] = "generated"
+    source: Literal["generated", "upload", "placeholder"] = "placeholder"
 
 
 class ChatMessage(BaseModel):
@@ -220,6 +222,35 @@ class ProjectUpdate(BaseModel):
     publish_records: list[PublishRecord] | None = None
 
 
+class ProjectDraftExport(BaseModel):
+    version: Literal[1] = 1
+    kind: Literal["draft"] = "draft"
+    exported_at: datetime = Field(default_factory=datetime.utcnow)
+    source_env: str = ""
+    title: str
+    inspiration: str
+    topic_meta: TopicMeta = Field(default_factory=TopicMeta)
+    content_pillar: str = ""
+    draft: str = ""
+    humanized: str = ""
+    chat_summary: str = ""
+    chat_summary_through: int = 0
+
+
+class ProjectDraftImportPayload(BaseModel):
+    version: Literal[1] = 1
+    kind: Literal["draft"] = "draft"
+    source_env: str = ""
+    title: str = "未命名项目"
+    inspiration: str = ""
+    topic_meta: TopicMeta = Field(default_factory=TopicMeta)
+    content_pillar: str = ""
+    draft: str = ""
+    humanized: str = ""
+    chat_summary: str = ""
+    chat_summary_through: int = 0
+
+
 class ChatRequest(BaseModel):
     message: str = ""
     selected_platform: Platform = "wechat"
@@ -251,6 +282,23 @@ class RiskWarningItem(BaseModel):
     phrase: str
     suggestion: str
     source: str = "default"
+    suggested_insert: str = ""
+    warning_type: str = "default"
+
+
+class CascadeRequest(BaseModel):
+    target_platforms: list[Platform] = Field(
+        default_factory=lambda: ["wechat", "xiaohongshu", "douyin"]
+    )
+    stream: bool = False
+
+
+class TrialMetricsSummary(BaseModel):
+    total_projects: int
+    completed_projects: int
+    completion_rate: float
+    avg_chat_rounds: float
+    multi_platform_rate: float
 
 
 class InspirationCreate(BaseModel):

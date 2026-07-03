@@ -3,24 +3,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { resolveImageUrl } from "@/lib/export";
-import type { ContentProject, Platform } from "@/lib/types";
+import type { ContentProject, Platform, WechatLayoutPreset } from "@/lib/types";
 import {
   createEmptyAssetSlot,
   insertPlaceholderInBody,
   nextAssetIndex,
   syncImagePlacementsFromBody,
 } from "@/lib/wechat-assets";
+import { LAYOUT_PRESET_LABELS, normalizeStyleTheme } from "@/lib/wechat-html";
+import { editableInputClassName, editableInputProps } from "@/lib/editable-input";
 
 export type EditorTab = "draft" | Platform;
-
-/** 阻止浏览器自动翻译/纠错改写用户正在输入的中文 */
-const editableInputProps = {
-  translate: "no" as const,
-  spellCheck: false,
-  autoCorrect: "off",
-  autoCapitalize: "off",
-  lang: "zh-CN",
-};
 
 interface ContentEditorProps {
   project: ContentProject;
@@ -32,7 +25,6 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const wechatAssetInputRef = useRef<HTMLInputElement>(null);
   const wechatBodyRef = useRef<HTMLTextAreaElement>(null);
   const draftTextareaRef = useRef<HTMLTextAreaElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -123,6 +115,15 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
     }, 800);
   }
 
+  function updateWechatPreset(preset: WechatLayoutPreset) {
+    const next = structuredClone(project);
+    next.platforms.wechat.style_theme = {
+      ...normalizeStyleTheme(next.platforms.wechat.style_theme),
+      layout_preset: preset,
+    };
+    scheduleSave(next);
+  }
+
   function updateWechat(field: "title" | "summary" | "body", value: string) {
     const next = structuredClone(project);
     next.platforms.wechat[field] = value;
@@ -165,21 +166,6 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
       next.cover_assets.push(createEmptyAssetSlot(index, caption));
     }
     scheduleSave(next, true);
-  }
-
-  async function handleWechatAssetUpload(file: File) {
-    setUploading(true);
-    try {
-      const caption = file.name.replace(/\.[^.]+$/, "").slice(0, 20) || "用户配图";
-      const saved = await api.uploadAsset(project.id, file, {
-        caption,
-        insertPlaceholder: true,
-      });
-      onUpdate(saved);
-    } finally {
-      setUploading(false);
-      if (wechatAssetInputRef.current) wechatAssetInputRef.current.value = "";
-    }
   }
 
   function updateXhs(field: "title" | "body", value: string) {
@@ -252,25 +238,48 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
           ref={draftTextareaRef}
           value={localDraft}
           onChange={(e) => updateDraft(e.target.value)}
-          className="notranslate min-h-72 w-full rounded-lg border border-stone-200 p-4 text-sm leading-7"
+          className={`${editableInputClassName} min-h-72 w-full rounded-lg border border-stone-200 p-4 text-sm leading-7`}
           placeholder="初稿将显示在这里。可通过对话继续打磨，满意后再生成各平台内容。"
           {...editableInputProps}
         />
       )}
 
       {editorTab === "wechat" && (
-        <div className="space-y-3">
+        <div className={`space-y-3 ${editableInputClassName}`} translate="no">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="text-xs text-stone-500">排版预设</label>
+            <select
+              value={normalizeStyleTheme(project.platforms.wechat.style_theme).layout_preset}
+              onChange={(e) => updateWechatPreset(e.target.value as WechatLayoutPreset)}
+              className="rounded-lg border border-stone-200 px-3 py-1.5 text-sm text-stone-700"
+            >
+              {(Object.entries(LAYOUT_PRESET_LABELS) as [WechatLayoutPreset, string][]).map(
+                ([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ),
+              )}
+            </select>
+            {project.platforms.wechat.style_theme?.mood && (
+              <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-500">
+                {project.platforms.wechat.style_theme.mood}
+              </span>
+            )}
+          </div>
           <input
             value={project.platforms.wechat.title}
             onChange={(e) => updateWechat("title", e.target.value)}
-            className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm"
+            className={`${editableInputClassName} w-full rounded-lg border border-stone-200 px-3 py-2 text-sm`}
             placeholder="公众号标题"
+            {...editableInputProps}
           />
           <input
             value={project.platforms.wechat.summary}
             onChange={(e) => updateWechat("summary", e.target.value)}
-            className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm"
+            className={`${editableInputClassName} w-full rounded-lg border border-stone-200 px-3 py-2 text-sm`}
             placeholder="摘要"
+            {...editableInputProps}
           />
           <div className="flex flex-wrap gap-2">
             <button
@@ -280,35 +289,18 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
             >
               插入配图占位
             </button>
-            <button
-              type="button"
-              onClick={() => wechatAssetInputRef.current?.click()}
-              disabled={uploading}
-              className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs text-white disabled:opacity-50"
-            >
-              {uploading ? "上传中…" : "上传配图"}
-            </button>
-            <input
-              ref={wechatAssetInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) void handleWechatAssetUpload(file);
-              }}
-            />
           </div>
           <p className="text-xs leading-relaxed text-stone-400">
             在正文对应位置写 <code className="rounded bg-stone-100 px-1">![图注](__IMAGE_0__)</code>{" "}
-            占位，或在聊天中上传素材后说「把这张图放到第 2 段后」。
+            占位；上传或 AI 生成请在右侧预览区对应占位处操作。
           </p>
           <textarea
             ref={wechatBodyRef}
             value={project.platforms.wechat.body}
             onChange={(e) => updateWechat("body", e.target.value)}
-            className="min-h-48 w-full rounded-lg border border-stone-200 p-3 font-mono text-sm leading-7"
+            className={`${editableInputClassName} min-h-48 w-full rounded-lg border border-stone-200 p-3 font-mono text-sm leading-7`}
             placeholder="正文 Markdown，可用 ![图注](__IMAGE_0__) 标记配图位置"
+            {...editableInputProps}
           />
         </div>
       )}

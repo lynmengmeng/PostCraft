@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
 from copy import deepcopy
 from datetime import datetime
@@ -15,6 +16,7 @@ from app.deps.auth import get_scope_kwargs, require_auth
 from app.models.schemas import (
     ApplyTitleRequest,
     AuthorStyleProfile,
+    CascadeRequest,
     ChatRequest,
     RegenerateChatRequest,
     ContentProject,
@@ -26,12 +28,15 @@ from app.models.schemas import (
     InspirationUpdate,
     LLMStatus,
     ProjectCreate,
+    ProjectDraftExport,
+    ProjectDraftImportPayload,
     ProjectUpdate,
     Topic,
     TopicCreate,
     TopicMeta,
     TopicStats,
     TopicUpdate,
+    TrialMetricsSummary,
     ChatMessage,
     RiskWarningItem,
     WechatContent,
@@ -66,6 +71,47 @@ def _scan_and_attach_warnings(project: ContentProject, db: Session) -> ContentPr
     raw = scan_project(project, style.banned_phrases)
     project.risk_warnings = [RiskWarningItem.model_validate(item) for item in raw]
     return project
+
+
+def _caption_for_asset_index(wechat: WechatContent, asset_index: int) -> str:
+    for placement in wechat.image_placements or []:
+        if placement.asset_index == asset_index and placement.caption:
+            return placement.caption
+    for match in re.finditer(rf"!\[([^\]]*)\]\(__IMAGE_{asset_index}__\)", wechat.body or ""):
+        if match.group(1).strip():
+            return match.group(1).strip()
+    return f"配图{asset_index + 1}"
+
+
+def _ensure_cover_asset_slot(
+    project: ContentProject,
+    asset_index: int,
+    *,
+    is_cover: bool = False,
+) -> tuple[list[CoverAsset], int]:
+    assets = list(project.cover_assets)
+    slot = next((i for i, a in enumerate(assets) if a.asset_index == asset_index), None)
+    if slot is not None:
+        return assets, slot
+
+    wechat = project.platforms["wechat"]
+    caption = _caption_for_asset_index(wechat, asset_index)
+    generator = ImageGenerator(get_settings())
+    aspect = "wechat" if is_cover else "xhs"
+    placeholder_url = generator.slot_placeholder(aspect, caption=caption[:24])
+    assets.append(
+        CoverAsset(
+            platform="wechat",
+            headline=caption[:20],
+            subheadline=caption,
+            prompt="待上传或 AI 生成",
+            image_url=placeholder_url,
+            caption=caption,
+            asset_index=asset_index,
+            source="placeholder",
+        )
+    )
+    return assets, len(assets) - 1
 
 
 @public_router.get("/health")
@@ -114,11 +160,13 @@ def update_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     data = payload.model_dump(exclude_unset=True)
+    wechat_updated = False
     if "platforms" in data and data["platforms"]:
         incoming = data.pop("platforms")
         for key, value in incoming.items():
             if key == "wechat":
                 project.platforms["wechat"] = WechatContent.model_validate(value)
+                wechat_updated = True
             elif key == "xiaohongshu":
                 project.platforms["xiaohongshu"] = XiaohongshuContent.model_validate(value)
             elif key == "douyin":
@@ -127,6 +175,14 @@ def update_project(
         setattr(project, key, value)
     if "cover_assets" in data and data["cover_assets"] is not None:
         project.cover_assets = [CoverAsset.model_validate(item) for item in data["cover_assets"]]
+    if wechat_updated:
+        wechat = project.platforms.get("wechat")
+        if wechat:
+            wechat_data = finalize_wechat_content(
+                wechat.model_dump(mode="json"),
+                [a.model_dump(mode="json") for a in project.cover_assets],
+            )
+            project.platforms["wechat"] = WechatContent.model_validate(wechat_data)
     project.updated_at = datetime.utcnow()
     content_fields = {"platforms", "draft", "humanized", "cover_assets"}
     if content_fields.intersection(data.keys()):
@@ -139,6 +195,57 @@ def delete_project(project_id: str, db: Session = Depends(get_db)) -> dict[str, 
     if not project_repo.delete_project(db, project_id, **_scope()):
         raise HTTPException(status_code=404, detail="Project not found")
     return {"ok": True}
+
+
+def _project_has_draft_content(project: ContentProject) -> bool:
+    return bool(
+        project.inspiration.strip()
+        or project.draft.strip()
+        or project.humanized.strip()
+    )
+
+
+@protected_router.get("/projects/{project_id}/export-draft", response_model=ProjectDraftExport)
+def export_project_draft(project_id: str, db: Session = Depends(get_db)) -> ProjectDraftExport:
+    project = project_repo.get_project(db, project_id, **_scope())
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not _project_has_draft_content(project):
+        raise HTTPException(status_code=400, detail="项目尚无灵感或初稿内容，无法导出")
+    return ProjectDraftExport(
+        exported_at=datetime.utcnow(),
+        title=project.title,
+        inspiration=project.inspiration,
+        topic_meta=project.topic_meta,
+        content_pillar=project.content_pillar,
+        draft=project.draft,
+        humanized=project.humanized,
+        chat_summary=project.chat_summary,
+        chat_summary_through=project.chat_summary_through,
+    )
+
+
+@protected_router.post("/projects/import-draft", response_model=ContentProject)
+def import_project_draft(
+    payload: ProjectDraftImportPayload,
+    db: Session = Depends(get_db),
+) -> ContentProject:
+    if not payload.draft.strip() and not payload.humanized.strip():
+        raise HTTPException(status_code=400, detail="导入包缺少初稿内容")
+    project = ContentProject(
+        id=new_id(),
+        title=payload.title.strip() or payload.inspiration[:24] or "未命名项目",
+        inspiration=payload.inspiration,
+        topic_meta=payload.topic_meta,
+        content_pillar=payload.content_pillar,
+        draft=payload.draft,
+        humanized=payload.humanized,
+        chat_summary=payload.chat_summary,
+        chat_summary_through=payload.chat_summary_through,
+    )
+    if project.humanized.strip():
+        project = _scan_and_attach_warnings(project, db)
+    return project_repo.save_project(db, project, **_scope())
 
 
 @protected_router.post("/projects/{project_id}/apply-title", response_model=ContentProject)
@@ -235,6 +342,60 @@ async def _chat_once(
     }
 
 
+async def _cascade_once(
+    project: ContentProject,
+    payload: CascadeRequest,
+    db: Session,
+    deltas: list[str] | None = None,
+) -> dict:
+    orchestrator = ChatOrchestrator(get_settings())
+    style_profile = style_repo.get(db, **_scope())
+
+    async def on_delta(text: str) -> None:
+        if deltas is not None:
+            deltas.append(text)
+
+    updated, patch, assistant = await orchestrator.handle_cascade(
+        project,
+        list(payload.target_platforms),
+        style_profile,
+        on_delta=on_delta if payload.stream else None,
+    )
+    saved = project_repo.save_project(db, updated, **_scope())
+    return {
+        "project": saved.model_dump(mode="json"),
+        "patch": patch.model_dump(mode="json"),
+        "assistant_message": assistant.model_dump(mode="json"),
+    }
+
+
+@protected_router.get("/analytics/trial-summary", response_model=TrialMetricsSummary)
+def trial_summary(db: Session = Depends(get_db)) -> TrialMetricsSummary:
+    projects = project_repo.list_projects(db, **_scope())
+    total = len(projects)
+    completed = sum(1 for p in projects if p.status in ("ready", "published"))
+    chat_rounds = [sum(1 for m in p.chat_history if m.role == "user") for p in projects]
+    multi_platform = 0
+    for project in projects:
+        count = 0
+        if project.platforms["wechat"].body:
+            count += 1
+        if project.platforms["xiaohongshu"].body:
+            count += 1
+        if project.platforms["douyin"].script:
+            count += 1
+        if count >= 2:
+            multi_platform += 1
+    avg_rounds = sum(chat_rounds) / len(chat_rounds) if chat_rounds else 0.0
+    return TrialMetricsSummary(
+        total_projects=total,
+        completed_projects=completed,
+        completion_rate=round(completed / total, 4) if total else 0.0,
+        avg_chat_rounds=round(avg_rounds, 2),
+        multi_platform_rate=round(multi_platform / total, 4) if total else 0.0,
+    )
+
+
 async def _regenerate_once(
     project: ContentProject,
     payload: RegenerateChatRequest,
@@ -267,7 +428,7 @@ async def _regenerate_once(
     }
 
 
-@protected_router.get("/images/{filename}")
+@public_router.get("/images/{filename}")
 def get_image(filename: str):
     settings = get_settings()
     path = settings.images_dir / filename
@@ -318,6 +479,7 @@ async def upload_asset(
     file: UploadFile = File(...),
     caption: str = Form(""),
     insert_placeholder: bool = Form(True),
+    asset_index: int | None = Form(None),
     db: Session = Depends(get_db),
 ) -> ContentProject:
     project = project_repo.get_project(db, project_id, **_scope())
@@ -332,32 +494,93 @@ async def upload_asset(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     assets = list(project.cover_assets)
-    asset_index = next_asset_index([a.model_dump(mode="json") for a in assets])
-    label = caption.strip() or f"配图{asset_index + 1}"
-    asset = CoverAsset(
-        platform="wechat",
-        headline=label[:20],
-        subheadline=label,
-        prompt="用户上传素材",
-        image_url=image_url,
-        caption=label,
-        asset_index=asset_index,
-        source="upload",
-    )
-    assets.append(asset)
-
     wechat = project.platforms["wechat"]
     wechat_data = wechat.model_dump(mode="json")
-    if insert_placeholder and wechat.body.strip():
-        wechat_data["body"] = insert_placeholder_in_body(wechat.body, asset_index, label)
-    elif insert_placeholder:
-        wechat_data["body"] = insert_placeholder_in_body("", asset_index, label)
+
+    if asset_index is not None:
+        assets, slot = _ensure_cover_asset_slot(project, asset_index)
+        existing = assets[slot]
+        label = caption.strip() or existing.caption or existing.subheadline or f"配图{asset_index + 1}"
+        assets[slot] = CoverAsset(
+            **{
+                **existing.model_dump(),
+                "image_url": image_url,
+                "source": "upload",
+                "caption": label,
+                "subheadline": label,
+            }
+        )
+    else:
+        new_index = next_asset_index([a.model_dump(mode="json") for a in assets])
+        label = caption.strip() or f"配图{new_index + 1}"
+        asset = CoverAsset(
+            platform="wechat",
+            headline=label[:20],
+            subheadline=label,
+            prompt="用户上传素材",
+            image_url=image_url,
+            caption=label,
+            asset_index=new_index,
+            source="upload",
+        )
+        assets.append(asset)
+        if insert_placeholder and wechat.body.strip():
+            wechat_data["body"] = insert_placeholder_in_body(wechat.body, new_index, label)
+        elif insert_placeholder:
+            wechat_data["body"] = insert_placeholder_in_body("", new_index, label)
 
     wechat_data["image_placements"] = sync_image_placements(
-        wechat_data.get("body", ""),
+        wechat_data.get("body", wechat.body),
         [a.model_dump(mode="json") for a in assets],
     )
     wechat_data = finalize_wechat_content(wechat_data, [a.model_dump(mode="json") for a in assets])
+    project.platforms["wechat"] = WechatContent.model_validate(wechat_data)
+    project.cover_assets = assets
+    if asset_index is not None and asset_index == 0:
+        project.platforms["xiaohongshu"].cover_image = image_url
+    project.updated_at = datetime.utcnow()
+    project = _scan_and_attach_warnings(project, db)
+    return project_repo.save_project(db, project, **_scope())
+
+
+@protected_router.post("/projects/{project_id}/assets/{asset_index}/generate", response_model=ContentProject)
+async def generate_asset_image(
+    project_id: str,
+    asset_index: int,
+    db: Session = Depends(get_db),
+) -> ContentProject:
+    project = project_repo.get_project(db, project_id, **_scope())
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    assets, slot = _ensure_cover_asset_slot(
+        project,
+        asset_index,
+        is_cover=asset_index == 0,
+    )
+    existing = assets[slot]
+    after_paragraph = existing.after_paragraph
+    is_cover = after_paragraph is None or after_paragraph < 0 or slot == 0
+    aspect = "wechat" if is_cover else "xhs"
+    prompt = existing.prompt or "纪实风格，暖色生活场景，真实自然，不要明显 AI 感"
+    generator = ImageGenerator(get_settings())
+    image_url = await generator.generate(prompt, aspect=aspect)
+
+    assets[slot] = CoverAsset(
+        **{
+            **existing.model_dump(),
+            "image_url": image_url,
+            "source": "generated",
+        }
+    )
+    if is_cover or asset_index == 0:
+        project.platforms["xiaohongshu"].cover_image = image_url
+
+    wechat = project.platforms["wechat"]
+    wechat_data = finalize_wechat_content(
+        wechat.model_dump(mode="json"),
+        [a.model_dump(mode="json") for a in assets],
+    )
     project.platforms["wechat"] = WechatContent.model_validate(wechat_data)
     project.cover_assets = assets
     project.updated_at = datetime.utcnow()
@@ -474,6 +697,59 @@ async def regenerate_chat_message(
             return
         except Exception as exc:
             message = f"重新生成失败：{exc}"
+            yield f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
+            return
+        yield f"event: done\ndata: {json.dumps(result, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@protected_router.post("/projects/{project_id}/cascade")
+async def cascade_project_platforms(
+    project_id: str,
+    payload: CascadeRequest,
+    db: Session = Depends(get_db),
+):
+    project = project_repo.get_project(db, project_id, **_scope())
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not payload.stream:
+        return await _cascade_once(project, payload, db)
+
+    async def event_stream() -> AsyncIterator[str]:
+        deltas: list[str] = []
+        yield f"event: delta\ndata: {json.dumps({'text': '开始同步平台…'}, ensure_ascii=False)}\n\n"
+
+        async def run_cascade() -> dict:
+            return await _cascade_once(project, payload, db, deltas=deltas)
+
+        import asyncio
+
+        from openai import APIStatusError, AuthenticationError
+
+        task = asyncio.create_task(run_cascade())
+        seen = 0
+        while not task.done():
+            while seen < len(deltas):
+                yield f"event: delta\ndata: {json.dumps({'text': deltas[seen]}, ensure_ascii=False)}\n\n"
+                seen += 1
+            await asyncio.sleep(0.15)
+        while seen < len(deltas):
+            yield f"event: delta\ndata: {json.dumps({'text': deltas[seen]}, ensure_ascii=False)}\n\n"
+            seen += 1
+        try:
+            result = task.result()
+        except AuthenticationError:
+            message = "LLM API Key 无效或已过期，请检查配置后重启后端。"
+            yield f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
+            return
+        except APIStatusError as exc:
+            message = f"LLM 请求失败（{exc.status_code}）：{exc}"
+            yield f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
+            return
+        except Exception as exc:
+            message = f"同步失败：{exc}"
             yield f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
             return
         yield f"event: done\ndata: {json.dumps(result, ensure_ascii=False)}\n\n"

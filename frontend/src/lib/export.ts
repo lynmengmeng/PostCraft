@@ -1,4 +1,5 @@
-import type { ContentProject, Platform, WechatContent } from "./types";
+import type { ContentProject, Platform, ProjectDraftExport, WechatContent } from "./types";
+import { hasRealImage } from "./wechat-assets";
 import { getPlatformCopyText } from "@/components/preview/PlatformPreview";
 import { renderWechatCopyHtml } from "./wechat-html";
 
@@ -22,6 +23,19 @@ export function exportAllPlatforms(project: ContentProject): void {
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = `${project.title.slice(0, 20) || "postcraft"}.md`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+export function downloadDraftBundle(data: ProjectDraftExport, title: string): void {
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
+    type: "application/json;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  const safeTitle = (title || "postcraft").slice(0, 20).replace(/[^\w\u4e00-\u9fff-]+/g, "-");
+  anchor.download = `postcraft-draft-${safeTitle}-${new Date().toISOString().slice(0, 10)}.json`;
   anchor.click();
   URL.revokeObjectURL(url);
 }
@@ -62,16 +76,16 @@ export function validateWechatContent(
     checks.push({ level: "info", message: "正文较短，确认是否已写完整" });
   }
   const placements = content.image_placements || [];
-  const missingImages = coverAssets.filter((a) => !a.image_url).length;
-  if (placements.length > 0 && missingImages > 0) {
+  const pendingImages = coverAssets.filter((a) => !hasRealImage(a)).length;
+  if (placements.length > 0 && pendingImages > 0) {
     checks.push({
       level: "warn",
-      message: `${missingImages} 张配图尚未生成，复制后需在公众号后台手动上传`,
+      message: `${pendingImages} 张配图尚未上传或生成，复制后需在公众号后台手动上传`,
     });
   }
   if (coverAssets.length > 0) {
     const coverAsset = coverAssets[0];
-    if (coverAsset?.image_url) {
+    if (coverAsset && hasRealImage(coverAsset)) {
       checks.push({
         level: "info",
         message:

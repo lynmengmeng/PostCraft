@@ -11,17 +11,24 @@ import {
 import { Icon } from "@/components/ui/Icon";
 import { ResizableColumns } from "@/components/ui/ResizableColumns";
 import { api, platformLabels, type ChatOptions } from "@/lib/api";
-import { WechatCoverEditor } from "@/components/studio/WechatCoverEditor";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { trackEvent } from "@/lib/metrics";
+import { CoverAssetSlot } from "@/components/studio/CoverAssetSlot";
 import {
-  downloadImage,
   exportAllPlatforms,
+  downloadDraftBundle,
   exportWechatHtml,
   resolveImageUrl,
   validateWechatContent,
 } from "@/lib/export";
 import { isWechatCoverAsset } from "@/lib/wechat-cover";
-import type { ContentProject, Platform } from "@/lib/types";
+import type { ChatMessage, ContentProject, Platform } from "@/lib/types";
 import { copyWechatRichHtml, getImagePlacementLabel } from "@/lib/wechat-html";
+
+const HEALTH_DISCLAIMER =
+  "以上仅为个人观察与生活记录，不构成医疗建议。如有健康问题，请咨询专业医生。";
+
+const ALL_PLATFORMS: Platform[] = ["wechat", "xiaohongshu", "douyin"];
 
 const platformIcons: Record<Platform, string> = {
   wechat: "chat_bubble",
@@ -51,9 +58,44 @@ function hasPlatformContent(project: ContentProject, item: Platform) {
   return project.platforms.douyin.script.length > 0;
 }
 
+function buildOutgoingUserContent(
+  text: string,
+  attachmentUrls: string[],
+  current: ContentProject,
+  options?: ChatOptions,
+): string {
+  const trimmed = text.trim();
+  if (trimmed) {
+    let content = trimmed;
+    if (attachmentUrls.length) {
+      content += `\n[附件: ${attachmentUrls.join(", ")}]`;
+    }
+    return content;
+  }
+  if (attachmentUrls.length > 0) {
+    return "请处理我上传的配图素材，插入公众号合适位置";
+  }
+  if (options?.action === "generate_draft" && current.inspiration.trim()) {
+    return current.inspiration.trim();
+  }
+  const actionLabels: Record<NonNullable<ChatOptions["action"]>, string> = {
+    generate_draft: "撰写观察型初稿",
+    generate_all: "一键生成三平台内容",
+    generate_platform: "生成平台内容",
+    refine_draft: "继续完善初稿",
+    layout_images: "调整公众号配图布局",
+  };
+  if (options?.action) {
+    return actionLabels[options.action] ?? options.action;
+  }
+  return trimmed;
+}
+
 export default function CreateStudioPage() {
   const params = useParams<{ projectId: string }>();
   const router = useRouter();
+  const { config } = useAuth();
+  const standaloneViewport = config?.auth_required === false;
   const autoStarted = useRef(false);
   const [project, setProject] = useState<ContentProject | null>(null);
   const [editorTab, setEditorTab] = useState<EditorTab>("draft");
@@ -69,6 +111,10 @@ export default function CreateStudioPage() {
   const [pendingAttachments, setPendingAttachments] = useState<string[]>([]);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [chatMessage, setChatMessage] = useState("");
+  const [cascadePrompt, setCascadePrompt] = useState(false);
+  const [cascading, setCascading] = useState(false);
+  const [exportingDraft, setExportingDraft] = useState(false);
+  const [actionInfo, setActionInfo] = useState("");
 
   useEffect(() => {
     api
@@ -81,7 +127,8 @@ export default function CreateStudioPage() {
           !hasDraft(loaded)
         ) {
           autoStarted.current = true;
-          await sendChat("", loaded, { action: "generate_draft" });
+          const seed = loaded.inspiration.trim();
+          await sendChat(seed, loaded, { action: "generate_draft" });
         }
       })
       .catch((err: Error) => setError(err.message))
@@ -93,16 +140,31 @@ export default function CreateStudioPage() {
     if (!current || sending) return false;
     const attachmentUrls = options?.attachment_urls ?? pendingAttachments;
     if (!text.trim() && !options?.action && attachmentUrls.length === 0) return false;
-    const outgoing =
-      text.trim() ||
-      (attachmentUrls.length > 0 ? "请处理我上传的配图素材，插入公众号合适位置" : "");
+
+    const outgoing = buildOutgoingUserContent(text, attachmentUrls, current, options);
+    const historyBefore = current.chat_history;
+    const optimisticUser: ChatMessage = {
+      id: `pending-${Date.now()}`,
+      role: "user",
+      content: outgoing,
+      created_at: new Date().toISOString(),
+      action: options?.action ?? null,
+      target_platforms: options?.target_platforms ?? [],
+      attachment_urls: attachmentUrls,
+    };
+
+    setProject({ ...current, chat_history: [...historyBefore, optimisticUser] });
+    setChatMessage("");
+    setPendingAttachments([]);
     setSending(true);
     setError("");
     setStreamingLines([]);
+
     try {
       const result = await api.chat(
         current.id,
-        outgoing,
+        text.trim() ||
+          (attachmentUrls.length > 0 ? "请处理我上传的配图素材，插入公众号合适位置" : ""),
         previewPlatform,
         true,
         (delta) => {
@@ -114,11 +176,27 @@ export default function CreateStudioPage() {
         },
       );
       setProject(result.project);
-      setPendingAttachments([]);
-      setChatMessage("");
       setStreamingLines([]);
+      trackEvent("chat_message", {
+        projectId: current.id,
+        intent: result.patch?.intent,
+        rounds: result.project.chat_history.filter((m) => m.role === "user").length,
+      });
+      if (
+        result.patch?.intent === "refine_draft" &&
+        result.patch.preview_hints?.includes("cascade_available")
+      ) {
+        setCascadePrompt(true);
+      } else if (result.patch?.intent === "cascade") {
+        setCascadePrompt(false);
+      }
+      if (result.patch?.intent === "generate_all") {
+        trackEvent("multi_platform_generate", { projectId: current.id, platforms: 3 });
+      }
       return true;
     } catch (err) {
+      setProject({ ...current, chat_history: historyBefore });
+      if (text.trim()) setChatMessage(text);
       setError(err instanceof Error ? err.message : "发送失败");
       setStreamingLines([]);
       return false;
@@ -170,6 +248,66 @@ export default function CreateStudioPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "上传失败");
     }
+  }
+
+  async function cascadeToPlatforms(targets: Platform[]) {
+    if (!project || cascading || sending) return;
+    setCascading(true);
+    setSending(true);
+    setError("");
+    setStreamingLines([]);
+    try {
+      const result = await api.cascadePlatforms(project.id, targets, true, (delta) => {
+        setStreamingLines((prev) => [...prev, delta]);
+      });
+      setProject(result.project);
+      setCascadePrompt(false);
+      setStreamingLines([]);
+      trackEvent("cascade_platforms", { projectId: project.id, platforms: targets });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "同步失败");
+      setStreamingLines([]);
+    } finally {
+      setCascading(false);
+      setSending(false);
+    }
+  }
+
+  async function insertHealthDisclaimer() {
+    if (!project) return;
+    const disclaimer =
+      project.risk_warnings?.find((w) => w.warning_type === "health")?.suggested_insert ||
+      HEALTH_DISCLAIMER;
+    const block = `\n\n---\n\n${disclaimer}`;
+    const payload: Partial<ContentProject> = {};
+    if (project.humanized || project.draft) {
+      const base = project.humanized || project.draft || "";
+      payload.humanized = base.includes(disclaimer) ? base : `${base}${block}`;
+      payload.draft = payload.humanized;
+    }
+    const platform = previewPlatform;
+    if (platform === "wechat" && project.platforms.wechat.body) {
+      const body = project.platforms.wechat.body;
+      payload.platforms = {
+        ...project.platforms,
+        wechat: {
+          ...project.platforms.wechat,
+          body: body.includes(disclaimer) ? body : `${body}${block}`,
+        },
+      };
+    } else if (platform === "xiaohongshu" && project.platforms.xiaohongshu.body) {
+      const body = project.platforms.xiaohongshu.body;
+      payload.platforms = {
+        ...project.platforms,
+        xiaohongshu: {
+          ...project.platforms.xiaohongshu,
+          body: body.includes(disclaimer) ? body : `${body}${block}`,
+        },
+      };
+    }
+    const updated = await api.updateProject(project.id, payload);
+    setProject(updated);
+    trackEvent("insert_health_disclaimer", { projectId: project.id });
   }
 
   async function generatePlatform(target: Platform | "all") {
@@ -259,6 +397,30 @@ export default function CreateStudioPage() {
     if (!project) return;
     const updated = await api.updateProject(project.id, { status: "ready" });
     setProject(updated);
+    trackEvent("project_ready", {
+      projectId: project.id,
+      rounds: project.chat_history.filter((m) => m.role === "user").length,
+    });
+  }
+
+  async function exportDraftBundle() {
+    if (!project) return;
+    setExportingDraft(true);
+    setError("");
+    setActionInfo("");
+    try {
+      const bundle = await api.exportDraftBundle(project.id);
+      downloadDraftBundle(
+        { ...bundle, source_env: typeof window !== "undefined" ? window.location.hostname : "" },
+        project.title,
+      );
+      setActionInfo("初稿包已下载，可在测试环境工作台导入");
+      setTimeout(() => setActionInfo(""), 4000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "导出初稿包失败");
+    } finally {
+      setExportingDraft(false);
+    }
   }
 
   async function copyCurrentPlatform() {
@@ -302,8 +464,12 @@ export default function CreateStudioPage() {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-background">
-      <header className="flex items-center justify-between border-b border-outline-variant/30 bg-surface/80 px-gutter py-3 backdrop-blur-md">
+    <div
+      className={`flex flex-col overflow-hidden bg-background ${
+        standaloneViewport ? "h-dvh" : "min-h-0 flex-1"
+      }`}
+    >
+      <header className="flex shrink-0 items-center justify-between border-b border-outline-variant/30 bg-surface/80 px-gutter py-3 backdrop-blur-md">
         <div className="flex items-center gap-4">
           <button
             type="button"
@@ -386,6 +552,17 @@ export default function CreateStudioPage() {
               导出 HTML
             </button>
           )}
+          {(project.inspiration || hasDraft(project)) && (
+            <button
+              type="button"
+              onClick={exportDraftBundle}
+              disabled={exportingDraft}
+              className="flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-1.5 text-sm text-on-surface-variant hover:bg-surface-container-low disabled:opacity-50"
+            >
+              <Icon name="upload_file" className="text-[16px]" />
+              {exportingDraft ? "导出中…" : "导出初稿包"}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => exportAllPlatforms(project)}
@@ -413,7 +590,8 @@ export default function CreateStudioPage() {
               minPercent: 12,
               content: (
         <section
-          className="custom-shadow flex h-full flex-col overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest"
+          className="custom-shadow notranslate flex h-full flex-col overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest"
+          translate="no"
         >
           <div className="flex items-center justify-between border-b border-outline-variant/10 bg-surface-container-low/30 px-4 py-3">
             <span className="flex items-center gap-2 text-[13px] font-semibold text-primary">
@@ -450,7 +628,7 @@ export default function CreateStudioPage() {
               </div>
             </div>
           )}
-          <div className="custom-scrollbar flex-1 space-y-4 overflow-y-auto p-4">
+          <div className="custom-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
             {project.chat_summary && (
               <p
                 className="text-xs text-on-surface-variant/60 line-clamp-2"
@@ -462,7 +640,11 @@ export default function CreateStudioPage() {
             {project.chat_history.map((item) =>
               item.role === "user" ? (
                 <div key={item.id} className="flex justify-end">
-                  <div className="max-w-[88%] rounded-[12px] rounded-tr-none bg-primary/12 px-5 py-3 text-left text-sm leading-relaxed text-on-surface">
+                  <div
+                    className={`max-w-[88%] rounded-[12px] rounded-tr-none bg-primary/12 px-5 py-3 text-left text-sm leading-relaxed text-on-surface ${
+                      item.id.startsWith("pending-") ? "opacity-90" : ""
+                    }`}
+                  >
                     {item.content}
                   </div>
                 </div>
@@ -499,8 +681,44 @@ export default function CreateStudioPage() {
                 ))}
               </div>
             )}
+            {cascadePrompt && hasDraft(project) && (
+              <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+                <p className="text-sm text-on-surface">初稿已更新。是否同步到已有平台版本？</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCascadePrompt(false)}
+                    disabled={cascading}
+                    className="rounded-full border border-outline-variant bg-surface px-3 py-1.5 text-xs font-medium text-on-surface-variant hover:border-primary disabled:opacity-50"
+                  >
+                    仅保留初稿
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => cascadeToPlatforms(ALL_PLATFORMS.filter((p) => hasPlatformContent(project, p)))}
+                    disabled={cascading || sending}
+                    className="rounded-full bg-primary px-3 py-1.5 text-xs font-bold text-on-primary disabled:opacity-50"
+                  >
+                    {cascading ? "同步中…" : "同步全部平台"}
+                  </button>
+                  {(Object.keys(platformLabels) as Platform[])
+                    .filter((p) => hasPlatformContent(project, p))
+                    .map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => cascadeToPlatforms([p])}
+                        disabled={cascading || sending}
+                        className="rounded-full border border-outline-variant bg-surface px-3 py-1.5 text-xs font-medium text-on-surface-variant hover:border-primary disabled:opacity-50"
+                      >
+                        仅{platformLabels[p]}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
-          <div className="space-y-3 border-t border-outline-variant/10 bg-surface-container-lowest p-4">
+          <div className="shrink-0 space-y-3 border-t border-outline-variant/10 bg-surface-container-lowest p-4">
             <div className="flex flex-wrap gap-2">
               {quickCommands.slice(0, 4).map((cmd) => (
                 <button
@@ -523,6 +741,7 @@ export default function CreateStudioPage() {
               onSend={(text) => sendChat(text)}
               onUploadAsset={(file) => void handleChatAssetUpload(file)}
             />
+            {actionInfo && <p className="text-xs text-primary">{actionInfo}</p>}
             {error && <p className="text-xs text-error">{error}</p>}
           </div>
         </section>
@@ -537,7 +756,7 @@ export default function CreateStudioPage() {
         <section
           className="custom-shadow flex h-full flex-col overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest"
         >
-          <div className="flex border-b border-outline-variant/10 bg-surface-container-low/20">
+          <div className="flex shrink-0 border-b border-outline-variant/10 bg-surface-container-low/20">
             <button
               type="button"
               onClick={() => setEditorTab("draft")}
@@ -572,7 +791,7 @@ export default function CreateStudioPage() {
               </button>
             ))}
           </div>
-          <div className="custom-scrollbar flex-1 overflow-y-auto p-6">
+          <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-6">
           <div className="mb-3 flex items-center justify-between text-sm">
             <span className="font-medium">
               {editorTab === "draft" ? "初稿编辑" : "平台内容编辑"}
@@ -586,21 +805,37 @@ export default function CreateStudioPage() {
 
             {(project.risk_warnings || []).length > 0 ? (
               <div className="rounded-xl border border-secondary-container bg-secondary-container/30 p-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-medium text-secondary">表述风险提示</h3>
-                  <button
-                    type="button"
-                    onClick={runFactCheck}
-                    className="text-xs text-primary underline"
-                  >
-                    重新扫描
-                  </button>
+                  <div className="flex items-center gap-3">
+                    {(project.risk_warnings || []).some((w) => w.warning_type === "health") && (
+                      <button
+                        type="button"
+                        onClick={() => void insertHealthDisclaimer()}
+                        className="text-xs font-medium text-primary underline"
+                      >
+                        一键插入免责声明
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={runFactCheck}
+                      className="text-xs text-primary underline"
+                    >
+                      重新扫描
+                    </button>
+                  </div>
                 </div>
                 <div className="mt-3 space-y-2">
                   {(project.risk_warnings || []).map((warning) => (
                     <div key={`${warning.phrase}-${warning.suggestion}`} className="text-sm">
                       <span className="font-medium text-on-surface">「{warning.phrase}」</span>
                       <span className="text-on-surface-variant"> — {warning.suggestion}</span>
+                      {warning.suggested_insert && (
+                        <p className="mt-1 text-xs text-on-surface-variant/80">
+                          建议插入：{warning.suggested_insert}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -678,11 +913,11 @@ export default function CreateStudioPage() {
             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low/50 p-4">
               <h3 className="text-sm font-medium text-on-surface-variant">封面与配图</h3>
               <p className="mt-2 text-xs leading-relaxed text-on-surface-variant/70">
-                发布清单：① 复制富文本粘贴正文 → ② 调整封面构图并下载 900×383 上传至公众号 → ③ 填写标题与摘要 → ④ 保存草稿或发表
+                生成平台内容后会先出现默认占位图。确认正文无误后，在每张占位上「上传图片」或「AI 生成」。
               </p>
               {project.cover_assets.length === 0 ? (
                 <p className="mt-3 text-sm leading-relaxed text-on-surface-variant">
-                  生成任意平台内容后会自动生成封面。也可在对话中发送「生成封面配图」。
+                  生成任意平台内容后会自动创建封面与配图占位。也可在对话中发送「生成封面配图」。
                 </p>
               ) : (
                 project.cover_assets.map((asset, index) => {
@@ -705,60 +940,15 @@ export default function CreateStudioPage() {
                     project.platforms.wechat.image_placements,
                   );
                   return (
-                    <div key={asset.id} className="mt-3 rounded-lg bg-surface-container-low p-3 text-sm">
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                          {placementLabel}
-                        </span>
-                        {asset.source === "upload" && (
-                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700">
-                            已上传
-                          </span>
-                        )}
-                        {asset.image_url && !isCover && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              downloadImage(
-                                asset.image_url!,
-                                `${asset.headline || "配图"}-${index + 1}.jpg`,
-                              )
-                            }
-                            className="text-xs text-primary underline"
-                          >
-                            下载
-                          </button>
-                        )}
-                      </div>
-                      {asset.image_url ? (
-                        isCover ? (
-                          <div className="mb-2">
-                            <WechatCoverEditor
-                              key={asset.image_url}
-                              imageUrl={asset.image_url}
-                              filename={`${asset.headline || "公众号封面"}.jpg`}
-                            />
-                          </div>
-                        ) : (
-                          <img
-                            src={resolveImageUrl(asset.image_url)}
-                            alt={asset.headline}
-                            className="mb-2 w-full rounded-lg object-cover"
-                          />
-                        )
-                      ) : (
-                        <div className="mb-2 flex aspect-[2.35/1] w-full items-center justify-center rounded-lg bg-surface-container text-xs text-on-surface-variant">
-                          {isCover
-                            ? "封面生成中或失败，可在对话中发送「生成封面配图」重试"
-                            : "配图生成中或失败，可在对话中发送「生成封面配图」重试"}
-                        </div>
-                      )}
-                      <div className="font-medium">{asset.headline}</div>
-                      <div className="text-on-surface-variant">
-                        {asset.caption || asset.subheadline}
-                      </div>
-                      <div className="mt-2 text-xs text-on-surface-variant/60">{asset.prompt}</div>
-                    </div>
+                    <CoverAssetSlot
+                      key={asset.id}
+                      projectId={project.id}
+                      asset={asset}
+                      index={index}
+                      placementLabel={placementLabel}
+                      isCover={isCover}
+                      onUpdate={(saved) => setProject(saved)}
+                    />
                   );
                 })
               )}
@@ -830,7 +1020,11 @@ export default function CreateStudioPage() {
                 {project.humanized || project.draft || "初稿生成后将显示在这里。"}
               </div>
             ) : (
-              <PreviewPanel project={project} platform={previewPlatform} />
+              <PreviewPanel
+                project={project}
+                platform={editorTab === "draft" ? previewPlatform : (editorTab as Platform)}
+                onProjectUpdate={setProject}
+              />
             )}
           </div>
         </section>

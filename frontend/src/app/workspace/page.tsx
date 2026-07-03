@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useShell } from "@/components/layout/AppShell";
 import { Icon } from "@/components/ui/Icon";
 import { LoadError } from "@/components/ui/LoadError";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { api, statusLabels } from "@/lib/api";
-import type { ContentProject } from "@/lib/types";
+import type { ContentProject, ProjectDraftImportPayload, Topic } from "@/lib/types";
 
 function getWeekLabel(date = new Date()) {
   const start = new Date(date.getFullYear(), 0, 1);
@@ -96,6 +96,35 @@ function DraftCard({
   );
 }
 
+function TopicChip({ topic }: { topic: Topic }) {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+
+  async function startFromTopic() {
+    setLoading(true);
+    try {
+      const project = await api.topicToProject(topic.id);
+      router.push(`/create/${project.id}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void startFromTopic()}
+      disabled={loading}
+      className="rounded-lg border border-outline-variant/40 bg-surface px-4 py-2 text-left text-sm transition-colors hover:border-primary disabled:opacity-50"
+    >
+      <span className="font-semibold text-on-surface">{topic.title}</span>
+      {topic.content_pillar && (
+        <span className="ml-2 text-[11px] text-on-surface-variant">{topic.content_pillar}</span>
+      )}
+    </button>
+  );
+}
+
 export default function HomePage() {
   const router = useRouter();
   const { zenMode, setZenMode, searchQuery } = useShell();
@@ -107,18 +136,28 @@ export default function HomePage() {
     setData: setBoot,
   } = useBackendQuery(
     async () => {
-      const [projectList, status] = await Promise.all([api.listProjects(), api.llmStatus()]);
-      return { projects: projectList, llmStatus: status };
+      const [projectList, status, topicList, trialMetrics] = await Promise.all([
+        api.listProjects(),
+        api.llmStatus(),
+        api.listTopics(),
+        api.trialSummary().catch(() => null),
+      ]);
+      return { projects: projectList, llmStatus: status, topics: topicList, trialMetrics };
     },
     [],
   );
   const projects = boot?.projects ?? [];
   const llmStatus = boot?.llmStatus ?? null;
+  const topics = boot?.topics ?? [];
+  const trialMetrics = boot?.trialMetrics ?? null;
   const [inspiration, setInspiration] = useState("");
   const [quickInspiration, setQuickInspiration] = useState("");
   const [savingInspiration, setSavingInspiration] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [importingDraft, setImportingDraft] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [actionInfo, setActionInfo] = useState("");
+  const importDraftRef = useRef<HTMLInputElement>(null);
 
   async function createFromInspiration() {
     if (!inspiration.trim()) return;
@@ -131,6 +170,47 @@ export default function HomePage() {
       setActionError(err instanceof Error ? err.message : "创建失败");
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function handleImportDraft(file: File) {
+    setActionError("");
+    setActionInfo("");
+    setImportingDraft(true);
+    try {
+      const parsed = JSON.parse(await file.text()) as Partial<ProjectDraftImportPayload>;
+      if (parsed.version !== 1 || parsed.kind !== "draft") {
+        setActionError("不是有效的初稿包（需 version=1, kind=draft）");
+        return;
+      }
+      if (!parsed.draft?.trim() && !parsed.humanized?.trim()) {
+        setActionError("导入包缺少初稿内容");
+        return;
+      }
+      const project = await api.importDraftBundle({
+        version: 1,
+        kind: "draft",
+        source_env: parsed.source_env ?? "",
+        title: parsed.title ?? "未命名项目",
+        inspiration: parsed.inspiration ?? "",
+        topic_meta: parsed.topic_meta ?? {
+          direction: "社会观察",
+          tone: "温和共情",
+          audience: "普通家庭",
+          platforms: ["wechat", "xiaohongshu", "douyin"],
+        },
+        content_pillar: parsed.content_pillar ?? "",
+        draft: parsed.draft ?? "",
+        humanized: parsed.humanized ?? "",
+        chat_summary: parsed.chat_summary ?? "",
+        chat_summary_through: parsed.chat_summary_through ?? 0,
+      });
+      router.push(`/create/${project.id}`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "导入失败，请检查 JSON 格式");
+    } finally {
+      setImportingDraft(false);
+      if (importDraftRef.current) importDraftRef.current.value = "";
     }
   }
 
@@ -168,6 +248,12 @@ export default function HomePage() {
   const drafts = projects.filter((p) => p.status !== "published" && matchProject(p));
   const recent = projects.filter(matchProject).slice(0, 6);
   const latestProject = projects[0];
+  const readyDraft = projects.find((p) => p.status === "ready" && matchProject(p));
+  const continueDraft =
+    projects.find((p) => p.status === "draft" && matchProject(p)) ?? latestProject;
+  const recommendedTopics = topics
+    .filter((t) => t.priority === "soon")
+    .slice(0, 3);
   const calendarDays = getMiniCalendarDays();
   const todayKey = new Date().toDateString();
 
@@ -180,6 +266,11 @@ export default function HomePage() {
           {actionError && (
             <p className="rounded-xl border border-error/20 bg-error-container px-4 py-3 text-sm text-error">
               {actionError}
+            </p>
+          )}
+          {actionInfo && (
+            <p className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">
+              {actionInfo}
             </p>
           )}
 
@@ -205,13 +296,13 @@ export default function HomePage() {
                 </div>
               )}
             </div>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               <input
                 value={inspiration}
                 onChange={(e) => setInspiration(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && createFromInspiration()}
                 placeholder="输入一句话灵感，例如：农村老人重疾增多，可能和劣质商品、环境污染有关"
-                className="flex-1 rounded-xl border border-outline-variant/50 bg-surface-container-lowest px-6 py-4 text-[17px] shadow-sm outline-none transition-all placeholder:text-on-surface-variant/40 focus:border-primary focus:ring-2 focus:ring-primary/20"
+                className="min-w-[240px] flex-1 rounded-xl border border-outline-variant/50 bg-surface-container-lowest px-6 py-4 text-[17px] shadow-sm outline-none transition-all placeholder:text-on-surface-variant/40 focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
               <button
                 type="button"
@@ -221,8 +312,78 @@ export default function HomePage() {
               >
                 {creating ? "创建中..." : "开始创作"}
               </button>
+              <input
+                ref={importDraftRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handleImportDraft(file);
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => importDraftRef.current?.click()}
+                disabled={importingDraft}
+                className="flex items-center gap-2 rounded-xl border border-outline-variant/50 bg-surface-container-lowest px-6 py-4 text-[15px] font-medium text-on-surface-variant shadow-sm transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
+              >
+                <Icon name="download" className="text-[20px]" />
+                {importingDraft ? "导入中…" : "导入初稿包"}
+              </button>
             </div>
           </div>
+
+          {(readyDraft || continueDraft || recommendedTopics.length > 0) && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {readyDraft && (
+                <Link
+                  href={`/create/${readyDraft.id}`}
+                  className="rounded-xl border border-secondary-container/50 bg-secondary-container/20 p-5 transition-colors hover:border-secondary"
+                >
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-secondary">
+                    待发布
+                  </p>
+                  <h3 className="mt-2 font-headline text-lg font-bold">{readyDraft.title}</h3>
+                  <p className="mt-1 text-sm text-on-surface-variant">已标记就绪，可复制发布</p>
+                </Link>
+              )}
+              {continueDraft && continueDraft.id !== readyDraft?.id && (
+                <Link
+                  href={`/create/${continueDraft.id}`}
+                  className="rounded-xl border border-primary/20 bg-primary/5 p-5 transition-colors hover:border-primary"
+                >
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-primary">
+                    继续编辑
+                  </p>
+                  <h3 className="mt-2 font-headline text-lg font-bold">{continueDraft.title}</h3>
+                  <p className="mt-1 text-sm text-on-surface-variant">
+                    上次更新 {formatRelativeTime(continueDraft.updated_at)}
+                  </p>
+                </Link>
+              )}
+              {recommendedTopics.length > 0 && (
+                <div className="rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-5 md:col-span-2">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
+                    推荐今日选题
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    {recommendedTopics.map((topic) => (
+                      <TopicChip key={topic.id} topic={topic} />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {trialMetrics && trialMetrics.total_projects > 0 && (
+            <div className="flex flex-wrap gap-4 rounded-xl border border-outline-variant/30 bg-surface-container-low/40 px-5 py-3 text-xs text-on-surface-variant">
+              <span>完成率 {(trialMetrics.completion_rate * 100).toFixed(0)}%</span>
+              <span>平均对话 {trialMetrics.avg_chat_rounds} 轮</span>
+              <span>多平台采用 {(trialMetrics.multi_platform_rate * 100).toFixed(0)}%</span>
+            </div>
+          )}
 
           {/* Today's Inspiration */}
           <div className="space-y-6 rounded-xl border border-outline-variant bg-surface-container-lowest p-8">

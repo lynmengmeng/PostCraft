@@ -19,9 +19,10 @@ interface ContentEditorProps {
   project: ContentProject;
   editorTab: EditorTab;
   onUpdate: (project: ContentProject) => void;
+  onSaveError?: (message: string) => void;
 }
 
-export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorProps) {
+export function ContentEditor({ project, editorTab, onUpdate, onSaveError }: ContentEditorProps) {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -75,6 +76,7 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
         setTimeout(() => setSaveState("idle"), 1500);
       } catch {
         setSaveState("idle");
+        onSaveError?.("自动保存失败，请检查网络后重试");
       }
     }, 800);
   }
@@ -110,7 +112,10 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
         setSaveState("saved");
         setTimeout(() => setSaveState("idle"), 1500);
       } catch {
-        if (token === draftSaveTokenRef.current) setSaveState("idle");
+        if (token === draftSaveTokenRef.current) {
+          setSaveState("idle");
+          onSaveError?.("自动保存失败，请检查网络后重试");
+        }
       }
     }, 800);
   }
@@ -223,12 +228,12 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
   }
 
   return (
-    <div className="rounded-2xl bg-white p-4 shadow-sm">
+    <div className="rounded-2xl border border-outline-variant/20 bg-surface-container-lowest p-4 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-stone-500">
+        <h3 className="text-sm font-medium text-on-surface-variant">
           {editorTab === "draft" ? "观察型初稿（可编辑）" : "当前平台内容（可编辑）"}
         </h3>
-        <span className="text-xs text-stone-400">
+        <span className="text-xs text-on-surface-variant/60">
           {saveState === "saving" ? "保存中…" : saveState === "saved" ? "已自动保存" : ""}
         </span>
       </div>
@@ -238,7 +243,7 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
           ref={draftTextareaRef}
           value={localDraft}
           onChange={(e) => updateDraft(e.target.value)}
-          className={`${editableInputClassName} min-h-72 w-full rounded-lg border border-stone-200 p-4 text-sm leading-7`}
+          className={`${editableInputClassName} min-h-72 w-full rounded-lg border border-outline-variant/30 bg-surface-container-low p-4 text-sm leading-7 text-on-surface`}
           placeholder="初稿将显示在这里。可通过对话继续打磨，满意后再生成各平台内容。"
           {...editableInputProps}
         />
@@ -247,11 +252,11 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
       {editorTab === "wechat" && (
         <div className={`space-y-3 ${editableInputClassName}`} translate="no">
           <div className="flex flex-wrap items-center gap-3">
-            <label className="text-xs text-stone-500">排版预设</label>
+            <label className="text-xs text-on-surface-variant">排版预设</label>
             <select
               value={normalizeStyleTheme(project.platforms.wechat.style_theme).layout_preset}
               onChange={(e) => updateWechatPreset(e.target.value as WechatLayoutPreset)}
-              className="rounded-lg border border-stone-200 px-3 py-1.5 text-sm text-stone-700"
+              className="rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-1.5 text-sm text-on-surface"
             >
               {(Object.entries(LAYOUT_PRESET_LABELS) as [WechatLayoutPreset, string][]).map(
                 ([value, label]) => (
@@ -262,7 +267,7 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
               )}
             </select>
             {project.platforms.wechat.style_theme?.mood && (
-              <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] text-stone-500">
+              <span className="rounded-full bg-surface-container px-2 py-0.5 text-[10px] text-on-surface-variant">
                 {project.platforms.wechat.style_theme.mood}
               </span>
             )}
@@ -270,14 +275,14 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
           <input
             value={project.platforms.wechat.title}
             onChange={(e) => updateWechat("title", e.target.value)}
-            className={`${editableInputClassName} w-full rounded-lg border border-stone-200 px-3 py-2 text-sm`}
+            className={`${editableInputClassName} w-full rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-2 text-sm text-on-surface`}
             placeholder="公众号标题"
             {...editableInputProps}
           />
           <input
             value={project.platforms.wechat.summary}
             onChange={(e) => updateWechat("summary", e.target.value)}
-            className={`${editableInputClassName} w-full rounded-lg border border-stone-200 px-3 py-2 text-sm`}
+            className={`${editableInputClassName} w-full rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-2 text-sm text-on-surface`}
             placeholder="摘要"
             {...editableInputProps}
           />
@@ -285,20 +290,20 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
             <button
               type="button"
               onClick={insertWechatPlaceholderAtCursor}
-              className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs text-stone-600 hover:bg-stone-50"
+              className="rounded-lg border border-outline-variant/30 px-3 py-1.5 text-xs text-on-surface-variant hover:bg-surface-container-low"
             >
               插入配图占位
             </button>
           </div>
-          <p className="text-xs leading-relaxed text-stone-400">
-            在正文对应位置写 <code className="rounded bg-stone-100 px-1">![图注](__IMAGE_0__)</code>{" "}
+          <p className="text-xs leading-relaxed text-on-surface-variant/70">
+            在正文对应位置写 <code className="rounded bg-surface-container px-1">![图注](__IMAGE_0__)</code>{" "}
             占位；上传或 AI 生成请在右侧预览区对应占位处操作。
           </p>
           <textarea
             ref={wechatBodyRef}
             value={project.platforms.wechat.body}
             onChange={(e) => updateWechat("body", e.target.value)}
-            className={`${editableInputClassName} min-h-48 w-full rounded-lg border border-stone-200 p-3 font-mono text-sm leading-7`}
+            className={`${editableInputClassName} min-h-48 w-full rounded-lg border border-outline-variant/30 bg-surface-container-low p-3 font-mono text-sm leading-7 text-on-surface`}
             placeholder="正文 Markdown，可用 ![图注](__IMAGE_0__) 标记配图位置"
             {...editableInputProps}
           />
@@ -307,14 +312,14 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
 
       {editorTab === "xiaohongshu" && (
         <div className="space-y-3">
-          <div className="rounded-lg border border-dashed border-stone-200 bg-stone-50/80 p-3">
+          <div className="rounded-lg border border-dashed border-outline-variant/40 bg-surface-container-low/80 p-3">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs text-stone-500">封面图（建议 3:4）</span>
+              <span className="text-xs text-on-surface-variant">封面图（建议 3:4）</span>
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                className="rounded-lg bg-stone-900 px-3 py-1 text-xs text-white disabled:opacity-50"
+                className="rounded-lg bg-primary px-3 py-1 text-xs text-on-primary disabled:opacity-50"
               >
                 {uploading ? "上传中…" : "上传封面"}
               </button>
@@ -340,19 +345,19 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
           <input
             value={project.platforms.xiaohongshu.title}
             onChange={(e) => updateXhs("title", e.target.value)}
-            className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-2 text-sm text-on-surface"
             placeholder="笔记标题"
           />
           <textarea
             value={project.platforms.xiaohongshu.body}
             onChange={(e) => updateXhs("body", e.target.value)}
-            className="min-h-48 w-full rounded-lg border border-stone-200 p-3 text-sm leading-7"
+            className="min-h-48 w-full rounded-lg border border-outline-variant/30 bg-surface-container-low p-3 text-sm leading-7 text-on-surface"
             placeholder="笔记正文"
           />
           <input
             value={project.platforms.xiaohongshu.tags.map((t) => `#${t}`).join(" ")}
             onChange={(e) => updateXhsTags(e.target.value)}
-            className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-2 text-sm text-on-surface"
             placeholder="#标签1 #标签2"
           />
         </div>
@@ -363,21 +368,21 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
           <input
             value={project.platforms.douyin.hook}
             onChange={(e) => updateDouyinHook(e.target.value)}
-            className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-outline-variant/30 bg-surface-container-low px-3 py-2 text-sm text-on-surface"
             placeholder="3 秒钩子"
           />
           <div className="space-y-2">
             {project.platforms.douyin.script.map((scene) => (
-              <div key={scene.index} className="rounded-lg bg-stone-50 p-3">
-                <div className="text-xs text-stone-400">
+              <div key={scene.index} className="rounded-lg bg-surface-container-low p-3">
+                <div className="text-xs text-on-surface-variant/70">
                   镜号 {scene.index} · {scene.duration}
                 </div>
                 <textarea
                   value={scene.narration}
                   onChange={(e) => updateDouyinScene(scene.index, e.target.value)}
-                  className="mt-1 min-h-16 w-full rounded border border-stone-200 p-2 text-sm"
+                  className="mt-1 min-h-16 w-full rounded border border-outline-variant/30 bg-surface-container-lowest p-2 text-sm text-on-surface"
                 />
-                <div className="mt-1 text-xs text-stone-500">画面：{scene.visual}</div>
+                <div className="mt-1 text-xs text-on-surface-variant">画面：{scene.visual}</div>
               </div>
             ))}
           </div>

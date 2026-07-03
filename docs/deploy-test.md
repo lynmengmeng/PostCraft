@@ -111,6 +111,15 @@ POSTCRAFT_REFRESH_ENV=1 POSTCRAFT_ROOT=/opt/PostCraft bash deploy/install-fronte
 | A. 远程 API | `NEXT_PUBLIC_API_URL=https://postcrafttest.studyx.ai/api` | 本地 UI + 测试环境配图 |
 | B. 仅本地 | 默认 `localhost:8082` | 接受配图占位图 |
 
+## 初稿跨环境继续创作
+
+本地写好初稿后，可在测试环境导入并继续 AI 对话（不含三平台内容、配图、完整聊天历史；会保留 `chat_summary` 供 AI 参考此前讨论）：
+
+1. **本地**：创作室顶栏 → **导出初稿包** → 得到 `postcraft-draft-*.json`
+2. **测试环境**：打开 `https://postcraft.studyx.ai`（或你的前端域名）并登录
+3. **工作台** → **导入初稿包** → 选择 JSON → 自动进入创作室
+4. 继续对话打磨；满意后生成公众号 / 小红书 / 抖音（配图需在测试环境重新上传或 AI 生成）
+
 ## 部署后验证
 
 ```bash

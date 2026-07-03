@@ -106,7 +106,55 @@ export function renderArticleMarkdown(body: string): string {
   return html.join("");
 }
 
-/** 小红书正文：短段落 + 单换行保留 */
+/** 聊天消息：轻量 Markdown（段落、列表、加粗） */
+export function renderChatMarkdown(body: string): string {
+  const lines = body.split("\n");
+  const html: string[] = [];
+  let inUl = false;
+
+  function closeUl() {
+    if (inUl) {
+      html.push("</ul>");
+      inUl = false;
+    }
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const ulMatch = trimmed.match(/^[-*•]\s+(.+)$/);
+    if (ulMatch) {
+      if (!inUl) {
+        closeUl();
+        html.push('<ul class="my-1 list-disc pl-4">');
+        inUl = true;
+      }
+      html.push(`<li>${inlineFormat(ulMatch[1])}</li>`);
+      continue;
+    }
+    if (!trimmed) {
+      closeUl();
+      html.push("<br />");
+      continue;
+    }
+    closeUl();
+    if (trimmed.startsWith("### ")) {
+      html.push(`<p class="my-1 font-semibold">${inlineFormat(trimmed.slice(4))}</p>`);
+    } else if (trimmed.startsWith("## ")) {
+      html.push(`<p class="my-1 font-semibold">${inlineFormat(trimmed.slice(3))}</p>`);
+    } else if (trimmed.startsWith("# ")) {
+      html.push(`<p class="my-1 font-bold">${inlineFormat(trimmed.slice(2))}</p>`);
+    } else if (trimmed.startsWith("> ")) {
+      html.push(
+        `<blockquote class="my-1 border-l-2 border-outline-variant/40 pl-2 text-on-surface-variant">${inlineFormat(trimmed.slice(2))}</blockquote>`,
+      );
+    } else {
+      html.push(`<p class="my-0.5">${inlineFormat(trimmed)}</p>`);
+    }
+  }
+  closeUl();
+  return html.join("");
+}
+
 export function renderXhsBody(body: string): string {
   const blocks = body.split(/\n{2,}/).filter((block) => block.trim());
   if (blocks.length === 0) {

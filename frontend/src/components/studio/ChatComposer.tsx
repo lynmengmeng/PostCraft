@@ -12,6 +12,9 @@ interface ChatComposerProps {
   pendingAttachments: string[];
   onSend: (text: string) => Promise<boolean> | boolean;
   onUploadAsset: (file: File) => void;
+  onRemoveAttachment: (url: string) => void;
+  onClearAttachments: () => void;
+  onStop: () => void;
 }
 
 export function ChatComposer({
@@ -21,6 +24,9 @@ export function ChatComposer({
   pendingAttachments,
   onSend,
   onUploadAsset,
+  onRemoveAttachment,
+  onClearAttachments,
+  onStop,
 }: ChatComposerProps) {
   const chatFileRef = useRef<HTMLInputElement>(null);
   const composingRef = useRef(false);
@@ -54,22 +60,41 @@ export function ChatComposer({
   return (
     <div className={`space-y-3 ${editableInputClassName}`} translate="no">
       {pendingAttachments.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {pendingAttachments.map((url) => (
-            <div
-              key={url}
-              className="relative h-14 w-14 overflow-hidden rounded-lg border border-outline-variant/30"
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {pendingAttachments.map((url) => (
+              <div
+                key={url}
+                className="relative h-14 w-14 overflow-hidden rounded-lg border border-outline-variant/30"
+              >
+                <img
+                  src={resolveImageUrl(url)}
+                  alt="待发送素材"
+                  className="h-full w-full object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => onRemoveAttachment(url)}
+                  className="absolute right-0 top-0 flex h-5 w-5 items-center justify-center rounded-bl-lg bg-error/90 text-on-primary"
+                  title="移除"
+                >
+                  <Icon name="close" className="text-[12px]" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-on-surface-variant">
+              已选 {pendingAttachments.length} 张素材，发送后 AI 将处理配图位置
+            </span>
+            <button
+              type="button"
+              onClick={onClearAttachments}
+              className="text-xs text-primary underline"
             >
-              <img
-                src={resolveImageUrl(url)}
-                alt="待发送素材"
-                className="h-full w-full object-cover"
-              />
-            </div>
-          ))}
-          <span className="self-center text-xs text-on-surface-variant">
-            已选 {pendingAttachments.length} 张素材，发送后 AI 将处理配图位置
-          </span>
+              清空
+            </button>
+          </div>
         </div>
       )}
       <div className="relative">
@@ -120,14 +145,24 @@ export function ChatComposer({
               if (chatFileRef.current) chatFileRef.current.value = "";
             }}
           />
-          <button
-            type="button"
-            onClick={() => void submit()}
-            disabled={sending}
-            className="pointer-events-auto text-primary disabled:opacity-50"
-          >
-            <Icon name="send" className="text-[20px]" />
-          </button>
+          {sending ? (
+            <button
+              type="button"
+              onClick={onStop}
+              className="pointer-events-auto text-error"
+              title="停止生成（服务端任务可能仍在运行）"
+            >
+              <Icon name="stop_circle" className="text-[20px]" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void submit()}
+              className="pointer-events-auto text-primary"
+            >
+              <Icon name="send" className="text-[20px]" />
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -84,6 +84,7 @@ export interface ChatOptions {
   action?: "generate_draft" | "generate_platform" | "generate_all" | "refine_draft" | "layout_images";
   target_platforms?: Platform[];
   attachment_urls?: string[];
+  signal?: AbortSignal;
 }
 
 export const api = {
@@ -170,6 +171,7 @@ export const api = {
       return request<ChatResult>(`/projects/${id}/chat`, {
         method: "POST",
         body: JSON.stringify(body),
+        signal: options?.signal,
       });
     }
 
@@ -179,6 +181,7 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(body),
+        signal: options?.signal,
       });
     } catch (error) {
       throw new ApiError(formatApiError(error, API_BASE), {
@@ -200,6 +203,10 @@ export const api = {
     let buffer = "";
 
     while (true) {
+      if (options?.signal?.aborted) {
+        await reader.cancel();
+        throw new DOMException("Aborted", "AbortError");
+      }
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -236,6 +243,7 @@ export const api = {
     selectedPlatform: Platform,
     stream = true,
     onDelta?: (text: string) => void,
+    signal?: AbortSignal,
   ) => {
     const body = {
       assistant_message_id: assistantMessageId,
@@ -246,6 +254,7 @@ export const api = {
       return request<ChatResult>(`/projects/${id}/chat/regenerate`, {
         method: "POST",
         body: JSON.stringify(body),
+        signal,
       });
     }
 
@@ -255,6 +264,7 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(body),
+        signal,
       });
     } catch (error) {
       throw new ApiError(formatApiError(error, API_BASE), {
@@ -277,6 +287,10 @@ export const api = {
     let buffer = "";
 
     while (true) {
+      if (signal?.aborted) {
+        await reader.cancel();
+        throw new DOMException("Aborted", "AbortError");
+      }
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -312,12 +326,14 @@ export const api = {
     targetPlatforms: Platform[],
     stream = true,
     onDelta?: (text: string) => void,
+    signal?: AbortSignal,
   ) => {
     const body = { target_platforms: targetPlatforms, stream };
     if (!stream) {
       return request<ChatResult>(`/projects/${id}/cascade`, {
         method: "POST",
         body: JSON.stringify(body),
+        signal,
       });
     }
 
@@ -327,11 +343,12 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(body),
+        signal,
       });
     } catch (error) {
       throw new ApiError(formatApiError(error, API_BASE), {
         cause: error,
-        isNetworkFetchError: isNetworkFetchError(error),
+        isNetworkError: isNetworkFetchError(error),
       });
     }
 
@@ -347,6 +364,10 @@ export const api = {
     let buffer = "";
 
     while (true) {
+      if (signal?.aborted) {
+        await reader.cancel();
+        throw new DOMException("Aborted", "AbortError");
+      }
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });

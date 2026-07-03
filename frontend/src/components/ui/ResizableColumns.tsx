@@ -14,6 +14,7 @@ type ResizableColumnsProps = {
   panels: ResizablePanel[];
   handleWidth?: number;
   className?: string;
+  persistKey?: string;
 };
 
 const DEFAULT_HANDLE_WIDTH = 32;
@@ -43,10 +44,24 @@ function buildGridTemplate(ratios: number[], handleWidth: number, handles: numbe
     .join(" ");
 }
 
+function loadPersistedRatios(key: string, fallback: number[]): number[] {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as number[];
+    if (!Array.isArray(parsed) || parsed.length !== fallback.length) return fallback;
+    return parsed;
+  } catch {
+    return fallback;
+  }
+}
+
 export function ResizableColumns({
   panels,
   handleWidth = DEFAULT_HANDLE_WIDTH,
   className = "",
+  persistKey,
 }: ResizableColumnsProps) {
   const visiblePanels = panels.filter((p) => !p.hidden);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -57,16 +72,22 @@ export function ResizableColumns({
 
   const panelKey = visiblePanels.map((p) => p.id).join("|");
 
-  const [ratios, setRatios] = useState<number[]>(() => defaultRatios(visiblePanels));
+  const [ratios, setRatios] = useState<number[]>(() => {
+    const defaults = defaultRatios(visiblePanels);
+    return persistKey ? loadPersistedRatios(persistKey, defaults) : defaults;
+  });
 
   useEffect(() => {
-    setRatios(defaultRatios(visiblePanels));
+    const defaults = defaultRatios(visiblePanels);
+    setRatios(persistKey ? loadPersistedRatios(persistKey, defaults) : defaults);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panelKey]);
+  }, [panelKey, persistKey]);
 
   const syncRatios =
     ratios.length === visiblePanels.length ? ratios : defaultRatios(visiblePanels);
   const normalized = normalizeRatios(syncRatios);
+  const normalizedRef = useRef(normalized);
+  normalizedRef.current = normalized;
   const handles = visiblePanels.length - 1;
 
   const onPointerMove = useCallback(
@@ -110,12 +131,19 @@ export function ResizableColumns({
   );
 
   const onPointerUp = useCallback(() => {
+    if (dragRef.current && persistKey) {
+      try {
+        localStorage.setItem(persistKey, JSON.stringify(normalizedRef.current));
+      } catch {
+        /* ignore */
+      }
+    }
     dragRef.current = null;
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
     window.removeEventListener("pointermove", onPointerMove);
     window.removeEventListener("pointerup", onPointerUp);
-  }, [onPointerMove]);
+  }, [onPointerMove, persistKey]);
 
   useEffect(() => {
     return () => {

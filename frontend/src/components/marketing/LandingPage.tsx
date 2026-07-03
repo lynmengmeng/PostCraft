@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AuthAwareLink } from "@/components/auth/AuthAwareLink";
 import { Icon } from "@/components/ui/Icon";
 import { absoluteUrl, siteConfig } from "@/lib/site";
 
@@ -208,12 +209,12 @@ export function LandingPage() {
               常见问题
             </a>
           </nav>
-          <Link
+          <AuthAwareLink
             href="/workspace"
             className="rounded-xl bg-accent-cta px-5 py-2.5 text-sm font-bold text-white transition-opacity hover:opacity-90"
           >
             免费开始创作
-          </Link>
+          </AuthAwareLink>
         </div>
       </header>
 
@@ -241,13 +242,13 @@ export function LandingPage() {
                   通过对话不断打磨，预览满意再发布。
                 </p>
                 <div className="flex flex-wrap gap-4">
-                  <Link
+                  <AuthAwareLink
                     href="/workspace"
                     className="inline-flex items-center gap-2 rounded-xl bg-accent-cta px-8 py-4 text-base font-bold text-white shadow-lg shadow-accent-cta/20 transition-all hover:opacity-90 hover:shadow-xl"
                   >
                     立即免费体验
                     <Icon name="arrow_forward" className="text-[20px]" />
-                  </Link>
+                  </AuthAwareLink>
                   <a
                     href="#workflow"
                     className="inline-flex items-center gap-2 rounded-xl border border-outline-variant/50 bg-surface-container-lowest px-8 py-4 text-base font-semibold text-on-surface transition-colors hover:border-primary/30 hover:bg-surface-container-low"
@@ -395,13 +396,13 @@ export function LandingPage() {
               ))}
             </div>
             <div className="mt-14 text-center">
-              <Link
+              <AuthAwareLink
                 href="/workspace"
                 className="inline-flex items-center gap-2 rounded-xl bg-accent-cta px-8 py-4 text-base font-bold text-white transition-opacity hover:opacity-90"
               >
                 进入工作台开始创作
                 <Icon name="arrow_forward" className="text-[20px]" />
-              </Link>
+              </AuthAwareLink>
             </div>
           </div>
         </section>
@@ -473,13 +474,13 @@ export function LandingPage() {
             <p className="mx-auto mt-4 max-w-xl text-on-surface-variant/80">
               打开 PostCraft，用一句话灵感开始你的第一篇多平台内容。免费使用，本地部署，数据自己掌控。
             </p>
-            <Link
+            <AuthAwareLink
               href="/workspace"
               className="mt-8 inline-flex items-center gap-2 rounded-xl bg-accent-cta px-10 py-4 text-base font-bold text-white shadow-lg shadow-accent-cta/20 transition-all hover:opacity-90"
             >
               免费开始创作
               <Icon name="rocket_launch" className="text-[20px]" />
-            </Link>
+            </AuthAwareLink>
           </div>
         </section>
       </main>
@@ -492,15 +493,15 @@ export function LandingPage() {
             <p className="mt-1 text-sm text-on-surface-variant/70">{siteConfig.tagline}</p>
           </div>
           <nav className="flex flex-wrap justify-center gap-6 text-sm text-on-surface-variant">
-            <Link href="/workspace" className="transition-colors hover:text-primary">
+            <AuthAwareLink href="/workspace" className="transition-colors hover:text-primary">
               工作台
-            </Link>
-            <Link href="/inspirations" className="transition-colors hover:text-primary">
+            </AuthAwareLink>
+            <AuthAwareLink href="/inspirations" className="transition-colors hover:text-primary">
               灵感库
-            </Link>
-            <Link href="/topics" className="transition-colors hover:text-primary">
+            </AuthAwareLink>
+            <AuthAwareLink href="/topics" className="transition-colors hover:text-primary">
               选题库
-            </Link>
+            </AuthAwareLink>
             <a href="#faq" className="transition-colors hover:text-primary">
               常见问题
             </a>

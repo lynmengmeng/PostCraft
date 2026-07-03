@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.database import get_db
+from app.deps.auth import get_scope_kwargs, require_auth
 from app.models.schemas import (
     ApplyTitleRequest,
     AuthorStyleProfile,
@@ -51,32 +52,38 @@ from app.services.image_generator import ImageGenerator
 from app.services.llm_client import LLMClient
 from app.services.repository import inspiration_repo, project_repo, style_repo, topic_repo
 
+public_router = APIRouter()
+protected_router = APIRouter(dependencies=[Depends(require_auth)])
 router = APIRouter()
 
 
+def _scope() -> dict[str, str | bool | None]:
+    return get_scope_kwargs()
+
+
 def _scan_and_attach_warnings(project: ContentProject, db: Session) -> ContentProject:
-    style = style_repo.get(db)
+    style = style_repo.get(db, **_scope())
     raw = scan_project(project, style.banned_phrases)
     project.risk_warnings = [RiskWarningItem.model_validate(item) for item in raw]
     return project
 
 
-@router.get("/health")
+@public_router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.get("/llm/status", response_model=LLMStatus)
+@protected_router.get("/llm/status", response_model=LLMStatus)
 def llm_status() -> LLMStatus:
     return LLMClient(get_settings()).status()
 
 
-@router.get("/projects", response_model=list[ContentProject])
+@protected_router.get("/projects", response_model=list[ContentProject])
 def list_projects(db: Session = Depends(get_db)) -> list[ContentProject]:
-    return project_repo.list_projects(db)
+    return project_repo.list_projects(db, **_scope())
 
 
-@router.post("/projects", response_model=ContentProject)
+@protected_router.post("/projects", response_model=ContentProject)
 def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> ContentProject:
     project = ContentProject(
         id=new_id(),
@@ -85,24 +92,24 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> Con
         topic_meta=payload.topic_meta or TopicMeta(),
         content_pillar=payload.content_pillar,
     )
-    return project_repo.save_project(db, project)
+    return project_repo.save_project(db, project, **_scope())
 
 
-@router.get("/projects/{project_id}", response_model=ContentProject)
+@protected_router.get("/projects/{project_id}", response_model=ContentProject)
 def get_project(project_id: str, db: Session = Depends(get_db)) -> ContentProject:
-    project = project_repo.get_project(db, project_id)
+    project = project_repo.get_project(db, project_id, **_scope())
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
 
 
-@router.patch("/projects/{project_id}", response_model=ContentProject)
+@protected_router.patch("/projects/{project_id}", response_model=ContentProject)
 def update_project(
     project_id: str,
     payload: ProjectUpdate,
     db: Session = Depends(get_db),
 ) -> ContentProject:
-    project = project_repo.get_project(db, project_id)
+    project = project_repo.get_project(db, project_id, **_scope())
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -124,23 +131,23 @@ def update_project(
     content_fields = {"platforms", "draft", "humanized", "cover_assets"}
     if content_fields.intersection(data.keys()):
         project = _scan_and_attach_warnings(project, db)
-    return project_repo.save_project(db, project)
+    return project_repo.save_project(db, project, **_scope())
 
 
-@router.delete("/projects/{project_id}")
+@protected_router.delete("/projects/{project_id}")
 def delete_project(project_id: str, db: Session = Depends(get_db)) -> dict[str, bool]:
-    if not project_repo.delete_project(db, project_id):
+    if not project_repo.delete_project(db, project_id, **_scope()):
         raise HTTPException(status_code=404, detail="Project not found")
     return {"ok": True}
 
 
-@router.post("/projects/{project_id}/apply-title", response_model=ContentProject)
+@protected_router.post("/projects/{project_id}/apply-title", response_model=ContentProject)
 def apply_title(
     project_id: str,
     payload: ApplyTitleRequest,
     db: Session = Depends(get_db),
 ) -> ContentProject:
-    project = project_repo.get_project(db, project_id)
+    project = project_repo.get_project(db, project_id, **_scope())
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if payload.title_index < 0 or payload.title_index >= len(project.titles):
@@ -159,16 +166,16 @@ def apply_title(
 
     project.updated_at = datetime.utcnow()
     project = _scan_and_attach_warnings(project, db)
-    return project_repo.save_project(db, project)
+    return project_repo.save_project(db, project, **_scope())
 
 
-@router.post("/projects/{project_id}/versions/{version_id}/restore", response_model=ContentProject)
+@protected_router.post("/projects/{project_id}/versions/{version_id}/restore", response_model=ContentProject)
 def restore_version(
     project_id: str,
     version_id: str,
     db: Session = Depends(get_db),
 ) -> ContentProject:
-    project = project_repo.get_project(db, project_id)
+    project = project_repo.get_project(db, project_id, **_scope())
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -184,15 +191,15 @@ def restore_version(
         ChatMessage(role="assistant", content=f"已恢复到版本：{target.label}")
     )
     restored.updated_at = datetime.utcnow()
-    return project_repo.save_project(db, restored)
+    return project_repo.save_project(db, restored, **_scope())
 
 
-@router.get("/projects/{project_id}/fact-check")
+@protected_router.get("/projects/{project_id}/fact-check")
 def fact_check(project_id: str, db: Session = Depends(get_db)) -> dict:
-    project = project_repo.get_project(db, project_id)
+    project = project_repo.get_project(db, project_id, **_scope())
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    style = style_repo.get(db)
+    style = style_repo.get(db, **_scope())
     warnings = scan_project(project, style.banned_phrases)
     return {"warnings": warnings}
 
@@ -204,7 +211,7 @@ async def _chat_once(
     deltas: list[str] | None = None,
 ) -> dict:
     orchestrator = ChatOrchestrator(get_settings())
-    style_profile = style_repo.get(db)
+    style_profile = style_repo.get(db, **_scope())
 
     async def on_delta(text: str) -> None:
         if deltas is not None:
@@ -220,7 +227,7 @@ async def _chat_once(
         target_platforms=payload.target_platforms,
         attachment_urls=payload.attachment_urls or None,
     )
-    saved = project_repo.save_project(db, updated)
+    saved = project_repo.save_project(db, updated, **_scope())
     return {
         "project": saved.model_dump(mode="json"),
         "patch": patch.model_dump(mode="json"),
@@ -235,7 +242,7 @@ async def _regenerate_once(
     deltas: list[str] | None = None,
 ) -> dict:
     orchestrator = ChatOrchestrator(get_settings())
-    style_profile = style_repo.get(db)
+    style_profile = style_repo.get(db, **_scope())
 
     async def on_delta(text: str) -> None:
         if deltas is not None:
@@ -252,7 +259,7 @@ async def _regenerate_once(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    saved = project_repo.save_project(db, updated)
+    saved = project_repo.save_project(db, updated, **_scope())
     return {
         "project": saved.model_dump(mode="json"),
         "patch": patch.model_dump(mode="json"),
@@ -260,7 +267,7 @@ async def _regenerate_once(
     }
 
 
-@router.get("/images/{filename}")
+@protected_router.get("/images/{filename}")
 def get_image(filename: str):
     settings = get_settings()
     path = settings.images_dir / filename
@@ -280,13 +287,13 @@ def get_image(filename: str):
     return FileResponse(path)
 
 
-@router.post("/projects/{project_id}/upload-cover", response_model=ContentProject)
+@protected_router.post("/projects/{project_id}/upload-cover", response_model=ContentProject)
 async def upload_cover(
     project_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> ContentProject:
-    project = project_repo.get_project(db, project_id)
+    project = project_repo.get_project(db, project_id, **_scope())
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -302,10 +309,10 @@ async def upload_cover(
         project.cover_assets[0].image_url = image_url
     project.updated_at = datetime.utcnow()
     project = _scan_and_attach_warnings(project, db)
-    return project_repo.save_project(db, project)
+    return project_repo.save_project(db, project, **_scope())
 
 
-@router.post("/projects/{project_id}/upload-asset", response_model=ContentProject)
+@protected_router.post("/projects/{project_id}/upload-asset", response_model=ContentProject)
 async def upload_asset(
     project_id: str,
     file: UploadFile = File(...),
@@ -313,7 +320,7 @@ async def upload_asset(
     insert_placeholder: bool = Form(True),
     db: Session = Depends(get_db),
 ) -> ContentProject:
-    project = project_repo.get_project(db, project_id)
+    project = project_repo.get_project(db, project_id, **_scope())
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -355,16 +362,16 @@ async def upload_asset(
     project.cover_assets = assets
     project.updated_at = datetime.utcnow()
     project = _scan_and_attach_warnings(project, db)
-    return project_repo.save_project(db, project)
+    return project_repo.save_project(db, project, **_scope())
 
 
-@router.post("/projects/{project_id}/chat")
+@protected_router.post("/projects/{project_id}/chat")
 async def chat_with_project(
     project_id: str,
     payload: ChatRequest,
     db: Session = Depends(get_db),
 ):
-    project = project_repo.get_project(db, project_id)
+    project = project_repo.get_project(db, project_id, **_scope())
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -414,13 +421,13 @@ async def chat_with_project(
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@router.post("/projects/{project_id}/chat/regenerate")
+@protected_router.post("/projects/{project_id}/chat/regenerate")
 async def regenerate_chat_message(
     project_id: str,
     payload: RegenerateChatRequest,
     db: Session = Depends(get_db),
 ):
-    project = project_repo.get_project(db, project_id)
+    project = project_repo.get_project(db, project_id, **_scope())
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -474,12 +481,12 @@ async def regenerate_chat_message(
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@router.get("/inspirations", response_model=list[Inspiration])
+@protected_router.get("/inspirations", response_model=list[Inspiration])
 def list_inspirations(db: Session = Depends(get_db)) -> list[Inspiration]:
-    return inspiration_repo.list_all(db)
+    return inspiration_repo.list_all(db, **_scope())
 
 
-@router.post("/inspirations", response_model=Inspiration)
+@protected_router.post("/inspirations", response_model=Inspiration)
 def create_inspiration(payload: InspirationCreate, db: Session = Depends(get_db)) -> Inspiration:
     content = payload.content.strip()
     if not content:
@@ -491,10 +498,10 @@ def create_inspiration(payload: InspirationCreate, db: Session = Depends(get_db)
         image_url=payload.image_url.strip(),
         tags=payload.tags,
     )
-    return inspiration_repo.create(db, inspiration)
+    return inspiration_repo.create(db, inspiration, **_scope())
 
 
-@router.post("/inspirations/upload-screenshot", response_model=Inspiration)
+@protected_router.post("/inspirations/upload-screenshot", response_model=Inspiration)
 async def upload_inspiration_screenshot(
     file: UploadFile = File(...),
     content: str = "",
@@ -519,10 +526,10 @@ async def upload_inspiration_screenshot(
         image_url=image_url,
         tags=tag_list,
     )
-    return inspiration_repo.create(db, inspiration)
+    return inspiration_repo.create(db, inspiration, **_scope())
 
 
-@router.post("/inspirations/from-link", response_model=Inspiration)
+@protected_router.post("/inspirations/from-link", response_model=Inspiration)
 def create_inspiration_from_link(
     payload: InspirationFromLink,
     db: Session = Depends(get_db),
@@ -538,12 +545,12 @@ def create_inspiration_from_link(
         source_url=url,
         tags=payload.tags,
     )
-    return inspiration_repo.create(db, inspiration)
+    return inspiration_repo.create(db, inspiration, **_scope())
 
 
-@router.get("/inspirations/export")
+@protected_router.get("/inspirations/export")
 def export_inspirations(db: Session = Depends(get_db)) -> dict:
-    items = inspiration_repo.list_all(db)
+    items = inspiration_repo.list_all(db, **_scope())
     return {
         "version": 1,
         "exported_at": datetime.utcnow().isoformat(),
@@ -551,7 +558,7 @@ def export_inspirations(db: Session = Depends(get_db)) -> dict:
     }
 
 
-@router.post("/inspirations/import")
+@protected_router.post("/inspirations/import")
 def import_inspirations(
     payload: InspirationImportPayload,
     db: Session = Depends(get_db),
@@ -571,13 +578,13 @@ def import_inspirations(
             )
         )
     if created:
-        inspiration_repo.bulk_create(db, created)
+        inspiration_repo.bulk_create(db, created, **_scope())
     return {"imported": len(created)}
 
 
-@router.get("/inspirations/stats", response_model=InspirationStats)
+@protected_router.get("/inspirations/stats", response_model=InspirationStats)
 def inspiration_stats(db: Session = Depends(get_db)) -> InspirationStats:
-    items = inspiration_repo.list_all(db)
+    items = inspiration_repo.list_all(db, **_scope())
     by_source = {"manual": 0, "screenshot": 0, "link": 0}
     highlight_count = 0
     for item in items:
@@ -587,13 +594,13 @@ def inspiration_stats(db: Session = Depends(get_db)) -> InspirationStats:
     return InspirationStats(total=len(items), by_source=by_source, highlight_count=highlight_count)
 
 
-@router.patch("/inspirations/{inspiration_id}", response_model=Inspiration)
+@protected_router.patch("/inspirations/{inspiration_id}", response_model=Inspiration)
 def update_inspiration(
     inspiration_id: str,
     payload: InspirationUpdate,
     db: Session = Depends(get_db),
 ) -> Inspiration:
-    inspiration = inspiration_repo.get(db, inspiration_id)
+    inspiration = inspiration_repo.get(db, inspiration_id, **_scope())
     if not inspiration:
         raise HTTPException(status_code=404, detail="Inspiration not found")
 
@@ -610,12 +617,12 @@ def update_inspiration(
         data["is_highlight"] = updates["is_highlight"]
 
     updated = Inspiration.model_validate(data)
-    return inspiration_repo.update(db, updated)
+    return inspiration_repo.update(db, updated, **_scope())
 
 
-@router.post("/inspirations/{inspiration_id}/to-topic")
+@protected_router.post("/inspirations/{inspiration_id}/to-topic")
 def inspiration_to_topic(inspiration_id: str, db: Session = Depends(get_db)) -> dict:
-    inspiration = inspiration_repo.get(db, inspiration_id)
+    inspiration = inspiration_repo.get(db, inspiration_id, **_scope())
     if not inspiration:
         raise HTTPException(status_code=404, detail="Inspiration not found")
 
@@ -626,45 +633,45 @@ def inspiration_to_topic(inspiration_id: str, db: Session = Depends(get_db)) -> 
         tone="温和共情",
         content_pillar=inspiration.tags[0] if inspiration.tags else "",
     )
-    saved_topic = topic_repo.create(db, topic)
+    saved_topic = topic_repo.create(db, topic, **_scope())
     project = ContentProject(
         id=new_id(),
         title=saved_topic.title,
         inspiration=saved_topic.inspiration,
         topic_meta=TopicMeta(direction=saved_topic.direction, tone=saved_topic.tone),
     )
-    saved_project = project_repo.save_project(db, project)
+    saved_project = project_repo.save_project(db, project, **_scope())
     return {
         "topic": saved_topic.model_dump(mode="json"),
         "project": saved_project.model_dump(mode="json"),
     }
 
 
-@router.delete("/inspirations/{inspiration_id}")
+@protected_router.delete("/inspirations/{inspiration_id}")
 def delete_inspiration(inspiration_id: str, db: Session = Depends(get_db)) -> dict[str, bool]:
-    if not inspiration_repo.delete(db, inspiration_id):
+    if not inspiration_repo.delete(db, inspiration_id, **_scope()):
         raise HTTPException(status_code=404, detail="Inspiration not found")
     return {"ok": True}
 
 
-@router.get("/topics", response_model=list[Topic])
+@protected_router.get("/topics", response_model=list[Topic])
 def list_topics(db: Session = Depends(get_db)) -> list[Topic]:
-    return topic_repo.list_all(db)
+    return topic_repo.list_all(db, **_scope())
 
 
-@router.post("/topics", response_model=Topic)
+@protected_router.post("/topics", response_model=Topic)
 def create_topic(payload: TopicCreate, db: Session = Depends(get_db)) -> Topic:
     topic = Topic(**payload.model_dump())
-    return topic_repo.create(db, topic)
+    return topic_repo.create(db, topic, **_scope())
 
 
-@router.patch("/topics/{topic_id}", response_model=Topic)
+@protected_router.patch("/topics/{topic_id}", response_model=Topic)
 def update_topic(
     topic_id: str,
     payload: TopicUpdate,
     db: Session = Depends(get_db),
 ) -> Topic:
-    topic = topic_repo.get(db, topic_id)
+    topic = topic_repo.get(db, topic_id, **_scope())
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
 
@@ -673,12 +680,12 @@ def update_topic(
         if value is not None:
             data[key] = value
     updated = Topic.model_validate(data)
-    return topic_repo.update(db, updated)
+    return topic_repo.update(db, updated, **_scope())
 
 
-@router.get("/topics/stats", response_model=TopicStats)
+@protected_router.get("/topics/stats", response_model=TopicStats)
 def topic_stats(db: Session = Depends(get_db)) -> TopicStats:
-    items = topic_repo.list_all(db)
+    items = topic_repo.list_all(db, **_scope())
     by_tone: dict[str, int] = {}
     by_platform: dict[str, int] = {}
     by_material_status: dict[str, int] = {"idea": 0, "cases": 0, "ready": 0}
@@ -699,9 +706,9 @@ def topic_stats(db: Session = Depends(get_db)) -> TopicStats:
     )
 
 
-@router.post("/topics/{topic_id}/to-project", response_model=ContentProject)
+@protected_router.post("/topics/{topic_id}/to-project", response_model=ContentProject)
 def topic_to_project(topic_id: str, db: Session = Depends(get_db)) -> ContentProject:
-    topic = topic_repo.get(db, topic_id)
+    topic = topic_repo.get(db, topic_id, **_scope())
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
 
@@ -719,24 +726,28 @@ def topic_to_project(topic_id: str, db: Session = Depends(get_db)) -> ContentPro
             series=topic.series,
         ),
     )
-    return project_repo.save_project(db, project)
+    return project_repo.save_project(db, project, **_scope())
 
 
-@router.delete("/topics/{topic_id}")
+@protected_router.delete("/topics/{topic_id}")
 def delete_topic(topic_id: str, db: Session = Depends(get_db)) -> dict[str, bool]:
-    if not topic_repo.delete(db, topic_id):
+    if not topic_repo.delete(db, topic_id, **_scope()):
         raise HTTPException(status_code=404, detail="Topic not found")
     return {"ok": True}
 
 
-@router.get("/settings/style", response_model=AuthorStyleProfile)
+@protected_router.get("/settings/style", response_model=AuthorStyleProfile)
 def get_style_profile(db: Session = Depends(get_db)) -> AuthorStyleProfile:
-    return style_repo.get(db)
+    return style_repo.get(db, **_scope())
 
 
-@router.put("/settings/style", response_model=AuthorStyleProfile)
+@protected_router.put("/settings/style", response_model=AuthorStyleProfile)
 def update_style_profile(
     payload: AuthorStyleProfile,
     db: Session = Depends(get_db),
 ) -> AuthorStyleProfile:
-    return style_repo.save(db, payload)
+    return style_repo.save(db, payload, **_scope())
+
+
+router.include_router(public_router)
+router.include_router(protected_router)

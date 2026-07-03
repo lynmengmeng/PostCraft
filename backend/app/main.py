@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.db.database import init_db
 from app.routers.api import router
+from app.routers.auth import router as auth_router
 
 settings = get_settings()
 
@@ -15,6 +16,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(auth_router, prefix=settings.api_prefix)
 app.include_router(router, prefix=settings.api_prefix)
 
 

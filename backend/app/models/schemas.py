@@ -321,3 +321,30 @@ class LLMStatus(BaseModel):
     provider: str
     model: str
     configured: bool
+
+
+class UserPublic(BaseModel):
+    id: str
+    username: str
+    created_at: datetime
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserPublic
+
+
+class AuthConfig(BaseModel):
+    auth_required: bool
+    allow_register: bool

@@ -21,31 +21,82 @@ from app.db.database import (
     dump_json,
     load_json,
 )
-from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from sqlalchemy.orm import Query, Session
+
+
+def _scoped_query(
+    query: Query,
+    row_class: type,
+    user_id: str | None,
+    scoped: bool,
+) -> Query:
+    if not scoped:
+        return query
+    if not user_id:
+        return query.filter(False)
+    # 兼容登录前创建的历史数据（user_id 为空）
+    return query.filter(or_(row_class.user_id == user_id, row_class.user_id.is_(None)))
+
+
+def _owns_row(row: ProjectRow | InspirationRow | TopicRow, user_id: str | None, scoped: bool) -> bool:
+    if not scoped:
+        return True
+    if not user_id:
+        return False
+    return row.user_id == user_id or row.user_id is None
+
+
+def _adopt_orphan_row(
+    row: ProjectRow | InspirationRow | TopicRow,
+    user_id: str | None,
+    scoped: bool,
+) -> None:
+    if scoped and user_id and not row.user_id:
+        row.user_id = user_id
 
 
 class ProjectRepository:
-    def list_projects(self, db: Session) -> list[ContentProject]:
-        rows = db.query(ProjectRow).order_by(ProjectRow.updated_at.desc()).all()
+    def list_projects(self, db: Session, *, user_id: str | None = None, scoped: bool = False) -> list[ContentProject]:
+        query = db.query(ProjectRow).order_by(ProjectRow.updated_at.desc())
+        rows = _scoped_query(query, ProjectRow, user_id, scoped).all()
         return [ContentProject.model_validate(load_json(row.payload)) for row in rows]
 
-    def get_project(self, db: Session, project_id: str) -> ContentProject | None:
+    def get_project(
+        self,
+        db: Session,
+        project_id: str,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> ContentProject | None:
         row = db.get(ProjectRow, project_id)
-        if not row:
+        if not row or not _owns_row(row, user_id, scoped):
             return None
         return ContentProject.model_validate(load_json(row.payload))
 
-    def save_project(self, db: Session, project: ContentProject) -> ContentProject:
+    def save_project(
+        self,
+        db: Session,
+        project: ContentProject,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> ContentProject:
         project.updated_at = project.updated_at or project.created_at
         payload = dump_json(project.model_dump(mode="json"))
         row = db.get(ProjectRow, project.id)
         if row:
+            if scoped and user_id and row.user_id and row.user_id != user_id:
+                raise ValueError("Project not found")
             row.payload = payload
             row.updated_at = project.updated_at
+            _adopt_orphan_row(row, user_id, scoped)
         else:
             db.add(
                 ProjectRow(
                     id=project.id,
+                    user_id=user_id if scoped else None,
                     payload=payload,
                     created_at=project.created_at,
                     updated_at=project.updated_at,
@@ -54,9 +105,16 @@ class ProjectRepository:
         db.commit()
         return project
 
-    def delete_project(self, db: Session, project_id: str) -> bool:
+    def delete_project(
+        self,
+        db: Session,
+        project_id: str,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> bool:
         row = db.get(ProjectRow, project_id)
-        if not row:
+        if not row or not _owns_row(row, user_id, scoped):
             return False
         db.delete(row)
         db.commit()
@@ -64,20 +122,36 @@ class ProjectRepository:
 
 
 class InspirationRepository:
-    def list_all(self, db: Session) -> list[Inspiration]:
-        rows = db.query(InspirationRow).order_by(InspirationRow.created_at.desc()).all()
+    def list_all(self, db: Session, *, user_id: str | None = None, scoped: bool = False) -> list[Inspiration]:
+        query = db.query(InspirationRow).order_by(InspirationRow.created_at.desc())
+        rows = _scoped_query(query, InspirationRow, user_id, scoped).all()
         return [Inspiration.model_validate(load_json(row.payload)) for row in rows]
 
-    def get(self, db: Session, inspiration_id: str) -> Inspiration | None:
+    def get(
+        self,
+        db: Session,
+        inspiration_id: str,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> Inspiration | None:
         row = db.get(InspirationRow, inspiration_id)
-        if not row:
+        if not row or not _owns_row(row, user_id, scoped):
             return None
         return Inspiration.model_validate(load_json(row.payload))
 
-    def create(self, db: Session, inspiration: Inspiration) -> Inspiration:
+    def create(
+        self,
+        db: Session,
+        inspiration: Inspiration,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> Inspiration:
         db.add(
             InspirationRow(
                 id=inspiration.id,
+                user_id=user_id if scoped else None,
                 payload=dump_json(inspiration.model_dump(mode="json")),
                 created_at=inspiration.created_at,
             )
@@ -85,27 +159,50 @@ class InspirationRepository:
         db.commit()
         return inspiration
 
-    def update(self, db: Session, inspiration: Inspiration) -> Inspiration:
+    def update(
+        self,
+        db: Session,
+        inspiration: Inspiration,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> Inspiration:
         row = db.get(InspirationRow, inspiration.id)
-        if not row:
+        if not row or not _owns_row(row, user_id, scoped):
             raise ValueError("Inspiration not found")
+        _adopt_orphan_row(row, user_id, scoped)
         row.payload = dump_json(inspiration.model_dump(mode="json"))
         db.commit()
         return inspiration
 
-    def delete(self, db: Session, inspiration_id: str) -> bool:
+    def delete(
+        self,
+        db: Session,
+        inspiration_id: str,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> bool:
         row = db.get(InspirationRow, inspiration_id)
-        if not row:
+        if not row or not _owns_row(row, user_id, scoped):
             return False
         db.delete(row)
         db.commit()
         return True
 
-    def bulk_create(self, db: Session, inspirations: list[Inspiration]) -> list[Inspiration]:
+    def bulk_create(
+        self,
+        db: Session,
+        inspirations: list[Inspiration],
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> list[Inspiration]:
         for inspiration in inspirations:
             db.add(
                 InspirationRow(
                     id=inspiration.id,
+                    user_id=user_id if scoped else None,
                     payload=dump_json(inspiration.model_dump(mode="json")),
                     created_at=inspiration.created_at,
                 )
@@ -115,20 +212,36 @@ class InspirationRepository:
 
 
 class TopicRepository:
-    def list_all(self, db: Session) -> list[Topic]:
-        rows = db.query(TopicRow).order_by(TopicRow.updated_at.desc()).all()
+    def list_all(self, db: Session, *, user_id: str | None = None, scoped: bool = False) -> list[Topic]:
+        query = db.query(TopicRow).order_by(TopicRow.updated_at.desc())
+        rows = _scoped_query(query, TopicRow, user_id, scoped).all()
         return [Topic.model_validate(load_json(row.payload)) for row in rows]
 
-    def get(self, db: Session, topic_id: str) -> Topic | None:
+    def get(
+        self,
+        db: Session,
+        topic_id: str,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> Topic | None:
         row = db.get(TopicRow, topic_id)
-        if not row:
+        if not row or not _owns_row(row, user_id, scoped):
             return None
         return Topic.model_validate(load_json(row.payload))
 
-    def create(self, db: Session, topic: Topic) -> Topic:
+    def create(
+        self,
+        db: Session,
+        topic: Topic,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> Topic:
         db.add(
             TopicRow(
                 id=topic.id,
+                user_id=user_id if scoped else None,
                 payload=dump_json(topic.model_dump(mode="json")),
                 created_at=topic.created_at,
                 updated_at=topic.updated_at,
@@ -137,19 +250,34 @@ class TopicRepository:
         db.commit()
         return topic
 
-    def update(self, db: Session, topic: Topic) -> Topic:
+    def update(
+        self,
+        db: Session,
+        topic: Topic,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> Topic:
         row = db.get(TopicRow, topic.id)
-        if not row:
+        if not row or not _owns_row(row, user_id, scoped):
             raise ValueError("Topic not found")
+        _adopt_orphan_row(row, user_id, scoped)
         topic.updated_at = datetime.utcnow()
         row.payload = dump_json(topic.model_dump(mode="json"))
         row.updated_at = topic.updated_at
         db.commit()
         return topic
 
-    def delete(self, db: Session, topic_id: str) -> bool:
+    def delete(
+        self,
+        db: Session,
+        topic_id: str,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> bool:
         row = db.get(TopicRow, topic_id)
-        if not row:
+        if not row or not _owns_row(row, user_id, scoped):
             return False
         db.delete(row)
         db.commit()
@@ -159,19 +287,35 @@ class TopicRepository:
 class StyleRepository:
     STYLE_KEY = "author_style_profile"
 
-    def get(self, db: Session) -> AuthorStyleProfile:
-        row = db.get(SettingsRow, self.STYLE_KEY)
+    def _key(self, user_id: str | None, scoped: bool) -> str:
+        if scoped and user_id:
+            return f"{self.STYLE_KEY}:{user_id}"
+        return self.STYLE_KEY
+
+    def get(self, db: Session, *, user_id: str | None = None, scoped: bool = False) -> AuthorStyleProfile:
+        key = self._key(user_id, scoped)
+        row = db.get(SettingsRow, key)
+        if not row and scoped and user_id:
+            row = db.get(SettingsRow, self.STYLE_KEY)
         if not row:
             return AuthorStyleProfile()
         return AuthorStyleProfile.model_validate(load_json(row.payload))
 
-    def save(self, db: Session, profile: AuthorStyleProfile) -> AuthorStyleProfile:
+    def save(
+        self,
+        db: Session,
+        profile: AuthorStyleProfile,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> AuthorStyleProfile:
+        key = self._key(user_id, scoped)
         payload = dump_json(profile.model_dump(mode="json"))
-        row = db.get(SettingsRow, self.STYLE_KEY)
+        row = db.get(SettingsRow, key)
         if row:
             row.payload = payload
         else:
-            db.add(SettingsRow(key=self.STYLE_KEY, payload=payload))
+            db.add(SettingsRow(key=key, payload=payload))
         db.commit()
         return profile
 

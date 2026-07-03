@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Manrope, Playfair_Display, Plus_Jakarta_Sans } from "next/font/google";
+import { AuthProvider } from "@/components/auth/AuthProvider";
 import { AppShell } from "@/components/layout/AppShell";
 import { siteConfig } from "@/lib/site";
 import "./globals.css";
@@ -42,13 +43,16 @@ export default function RootLayout({
       className={`${jakarta.variable} ${manrope.variable} ${playfair.variable} h-full antialiased`}
     >
       <head>
+        <meta name="google" content="notranslate" />
         <link
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap"
           rel="stylesheet"
         />
       </head>
       <body className="min-h-full bg-background text-on-surface">
-        <AppShell>{children}</AppShell>
+        <AuthProvider>
+          <AppShell>{children}</AppShell>
+        </AuthProvider>
       </body>
     </html>
   );

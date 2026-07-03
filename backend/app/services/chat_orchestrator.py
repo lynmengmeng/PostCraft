@@ -541,7 +541,7 @@ class ChatOrchestrator:
 
         updated_assets = []
         image_url = ""
-        for asset in assets:
+        for index, asset in enumerate(assets):
             if asset.get("image_url") and asset.get("source") == "upload":
                 updated_assets.append(asset)
                 image_url = asset.get("image_url") or image_url
@@ -551,7 +551,12 @@ class ChatOrchestrator:
                 image_url = asset.get("image_url") or image_url
                 continue
             prompt = asset.get("prompt", "纪实风格封面")
-            image_url = await self.images.generate(prompt)
+            after_paragraph = asset.get("after_paragraph", -1)
+            is_cover = after_paragraph is None or after_paragraph < 0
+            if not is_cover and index == 0:
+                is_cover = True
+            aspect = "wechat" if is_cover else "xhs"
+            image_url = await self.images.generate(prompt, aspect=aspect)
             asset = {**asset, "image_url": image_url}
             updated_assets.append(asset)
 

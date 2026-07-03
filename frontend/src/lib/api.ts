@@ -10,8 +10,25 @@ import type {
   TopicStats,
 } from "./types";
 import { ApiError, formatApiError, isNetworkFetchError } from "./api-error";
+import { authHeaders, clearAuth } from "./auth";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8082/api";
+
+function mergeHeaders(init?: RequestInit): HeadersInit {
+  return {
+    ...authHeaders(),
+    ...(init?.headers || {}),
+  };
+}
+
+function handleUnauthorized(): never {
+  clearAuth();
+  if (typeof window !== "undefined") {
+    const redirect = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.href = `/login?redirect=${redirect}`;
+  }
+  throw new ApiError("请先登录");
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
@@ -20,7 +37,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
       headers: {
         "Content-Type": "application/json",
-        ...(init?.headers || {}),
+        ...mergeHeaders(init),
       },
       cache: "no-store",
     });
@@ -29,6 +46,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       cause: error,
       isNetworkError: isNetworkFetchError(error),
     });
+  }
+
+  if (response.status === 401) {
+    handleUnauthorized();
   }
 
   if (!response.ok) {
@@ -52,6 +73,26 @@ export interface ChatOptions {
 }
 
 export const api = {
+  authConfig: () => request<{ auth_required: boolean; allow_register: boolean }>("/auth/config"),
+  login: (username: string, password: string) =>
+    request<{ access_token: string; user: { id: string; username: string; created_at: string } }>(
+      "/auth/login",
+      {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      },
+    ),
+  register: (username: string, password: string) =>
+    request<{ access_token: string; user: { id: string; username: string; created_at: string } }>(
+      "/auth/register",
+      {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      },
+    ),
+  me: () =>
+    request<{ id: string; username: string; created_at: string }>("/auth/me"),
+
   health: () => request<{ status: string }>("/health"),
   llmStatus: () => request<LLMStatus>("/llm/status"),
 
@@ -114,7 +155,7 @@ export const api = {
     try {
       response = await fetch(`${API_BASE}/projects/${id}/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(body),
       });
     } catch (error) {
@@ -122,6 +163,10 @@ export const api = {
         cause: error,
         isNetworkError: isNetworkFetchError(error),
       });
+    }
+
+    if (response.status === 401) {
+      handleUnauthorized();
     }
 
     if (!response.ok || !response.body) {
@@ -186,7 +231,7 @@ export const api = {
     try {
       response = await fetch(`${API_BASE}/projects/${id}/chat/regenerate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(body),
       });
     } catch (error) {
@@ -194,6 +239,10 @@ export const api = {
         cause: error,
         isNetworkError: isNetworkFetchError(error),
       });
+    }
+
+    if (response.status === 401) {
+      handleUnauthorized();
     }
 
     if (!response.ok || !response.body) {
@@ -262,6 +311,7 @@ export const api = {
     try {
       response = await fetch(`${API_BASE}/inspirations/upload-screenshot`, {
         method: "POST",
+        headers: authHeaders(),
         body: form,
       });
     } catch (error) {
@@ -269,6 +319,9 @@ export const api = {
         cause: error,
         isNetworkError: isNetworkFetchError(error),
       });
+    }
+    if (response.status === 401) {
+      handleUnauthorized();
     }
     if (!response.ok) {
       const detail = await response.text();
@@ -340,6 +393,7 @@ export const api = {
     try {
       response = await fetch(`${API_BASE}/projects/${projectId}/upload-cover`, {
         method: "POST",
+        headers: authHeaders(),
         body: form,
       });
     } catch (error) {
@@ -347,6 +401,9 @@ export const api = {
         cause: error,
         isNetworkError: isNetworkFetchError(error),
       });
+    }
+    if (response.status === 401) {
+      handleUnauthorized();
     }
     if (!response.ok) {
       const detail = await response.text();
@@ -368,6 +425,7 @@ export const api = {
     try {
       response = await fetch(`${API_BASE}/projects/${projectId}/upload-asset`, {
         method: "POST",
+        headers: authHeaders(),
         body: form,
       });
     } catch (error) {
@@ -375,6 +433,9 @@ export const api = {
         cause: error,
         isNetworkError: isNetworkFetchError(error),
       });
+    }
+    if (response.status === 401) {
+      handleUnauthorized();
     }
     if (!response.ok) {
       const detail = await response.text();

@@ -70,10 +70,19 @@ export function validateWechatContent(
     });
   }
   if (coverAssets.length > 0) {
-    checks.push({
-      level: "info",
-      message: "封面图需在公众号左侧单独上传；正文配图若粘贴后不显示，请从配图清单下载后手动插入",
-    });
+    const coverAsset = coverAssets[0];
+    if (coverAsset?.image_url) {
+      checks.push({
+        level: "info",
+        message:
+          "公众号封面请使用「下载公众号封面」导出 900×383（2.35:1）后再上传；拖动选框确保 1:1 预览也包含主体",
+      });
+    } else {
+      checks.push({
+        level: "info",
+        message: "封面图需在公众号左侧单独上传；正文配图若粘贴后不显示，请从配图清单下载后手动插入",
+      });
+    }
   }
   return checks;
 }

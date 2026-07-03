@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { BackendStatusBanner } from "@/components/layout/BackendStatusBanner";
 import { Icon } from "@/components/ui/Icon";
 
@@ -43,7 +44,13 @@ export function useShell() {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const isPublicPage = pathname === "/" || pathname.startsWith("/create/");
+  const { user, config, loading, logout } = useAuth();
+  const isAuthPage = pathname === "/login" || pathname === "/register";
+  const isSeoLanding = pathname === "/";
+  const isCreatePage = pathname.startsWith("/create/");
+  // 仅在后端明确关闭鉴权时，创作页才可匿名访问；config 未加载时不放行
+  const isPublicCreate = isCreatePage && config?.auth_required === false;
+  const isPublicPage = isSeoLanding || isAuthPage || isPublicCreate;
   const [zenMode, setZenMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -58,8 +65,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setSearchQuery("");
   }, [pathname]);
 
-  if (isPublicPage) {
+  useEffect(() => {
+    if (loading || isPublicPage || isAuthPage) return;
+    if (config?.auth_required && !user) {
+      const redirect = encodeURIComponent(pathname);
+      router.replace(`/login?redirect=${redirect}`);
+    }
+  }, [loading, config, user, isPublicPage, isAuthPage, pathname, router]);
+
+  if (isPublicPage || isAuthPage) {
     return <>{children}</>;
+  }
+
+  if (loading || (config?.auth_required && !user)) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background text-on-surface-variant">
+        加载中…
+      </div>
+    );
   }
 
   const showInspector = pathname === "/workspace";
@@ -103,6 +126,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
 
           <div className="border-t border-outline-variant/30 p-4">
+            {user && (
+              <div className="mb-3 flex items-center justify-between rounded-lg bg-surface-container-low px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Icon name="account_circle" className="shrink-0 text-[20px] text-primary" />
+                  <span className="truncate text-[13px] font-medium text-on-surface">
+                    {user.username}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    logout();
+                    router.push("/login");
+                  }}
+                  className="shrink-0 rounded-md p-1 text-on-surface-variant transition-colors hover:bg-surface-container hover:text-error"
+                  title="退出登录"
+                >
+                  <Icon name="logout" className="text-[18px]" />
+                </button>
+              </div>
+            )}
             <button
               type="button"
               onClick={() => router.push("/workspace")}

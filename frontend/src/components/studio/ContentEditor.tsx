@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { resolveImageUrl } from "@/lib/export";
 import type { ContentProject, Platform } from "@/lib/types";
@@ -12,6 +12,15 @@ import {
 } from "@/lib/wechat-assets";
 
 export type EditorTab = "draft" | Platform;
+
+/** 阻止浏览器自动翻译/纠错改写用户正在输入的中文 */
+const editableInputProps = {
+  translate: "no" as const,
+  spellCheck: false,
+  autoCorrect: "off",
+  autoCapitalize: "off",
+  lang: "zh-CN",
+};
 
 interface ContentEditorProps {
   project: ContentProject;
@@ -25,7 +34,31 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
   const fileInputRef = useRef<HTMLInputElement>(null);
   const wechatAssetInputRef = useRef<HTMLInputElement>(null);
   const wechatBodyRef = useRef<HTMLTextAreaElement>(null);
+  const draftTextareaRef = useRef<HTMLTextAreaElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftSaveTokenRef = useRef(0);
+  const projectRef = useRef(project);
+  projectRef.current = project;
+
+  const [localDraft, setLocalDraft] = useState(() => project.humanized || project.draft || "");
+  const localDraftRef = useRef(localDraft);
+  localDraftRef.current = localDraft;
+
+  const selectionRef = useRef<{ start: number; end: number } | null>(null);
+
+  useEffect(() => {
+    const external = project.humanized || project.draft || "";
+    if (external === localDraftRef.current) return;
+    setLocalDraft(external);
+  }, [project.humanized, project.draft]);
+
+  useLayoutEffect(() => {
+    const textarea = draftTextareaRef.current;
+    const selection = selectionRef.current;
+    if (!textarea || !selection) return;
+    textarea.setSelectionRange(selection.start, selection.end);
+    selectionRef.current = null;
+  }, [localDraft]);
 
   useEffect(() => {
     return () => {
@@ -50,6 +83,42 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
         setTimeout(() => setSaveState("idle"), 1500);
       } catch {
         setSaveState("idle");
+      }
+    }, 800);
+  }
+
+  function scheduleDraftSave(next: ContentProject) {
+    const savingDraft = next.humanized || "";
+    const token = ++draftSaveTokenRef.current;
+
+    onUpdate(next);
+    setSaveState("saving");
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(async () => {
+      if (token !== draftSaveTokenRef.current) return;
+      try {
+        const saved = await api.updateProject(project.id, {
+          platforms: next.platforms,
+          draft: next.draft,
+          humanized: next.humanized,
+        });
+        if (token !== draftSaveTokenRef.current) return;
+
+        const localStillMatchesSave = localDraftRef.current === savingDraft;
+        if (localStillMatchesSave) {
+          onUpdate(saved);
+        } else {
+          // 用户仍在编辑：只同步风险扫描等元数据，不覆盖本地初稿
+          onUpdate({
+            ...projectRef.current,
+            risk_warnings: saved.risk_warnings,
+            updated_at: saved.updated_at,
+          });
+        }
+        setSaveState("saved");
+        setTimeout(() => setSaveState("idle"), 1500);
+      } catch {
+        if (token === draftSaveTokenRef.current) setSaveState("idle");
       }
     }, 800);
   }
@@ -153,10 +222,18 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
   }
 
   function updateDraft(value: string) {
+    const textarea = draftTextareaRef.current;
+    if (textarea) {
+      selectionRef.current = {
+        start: textarea.selectionStart ?? value.length,
+        end: textarea.selectionEnd ?? value.length,
+      };
+    }
+    setLocalDraft(value);
     const next = structuredClone(project);
     next.humanized = value;
     next.draft = value;
-    scheduleSave(next);
+    scheduleDraftSave(next);
   }
 
   return (
@@ -172,10 +249,12 @@ export function ContentEditor({ project, editorTab, onUpdate }: ContentEditorPro
 
       {editorTab === "draft" && (
         <textarea
-          value={project.humanized || project.draft || ""}
+          ref={draftTextareaRef}
+          value={localDraft}
           onChange={(e) => updateDraft(e.target.value)}
-          className="min-h-72 w-full rounded-lg border border-stone-200 p-4 text-sm leading-7"
+          className="notranslate min-h-72 w-full rounded-lg border border-stone-200 p-4 text-sm leading-7"
           placeholder="初稿将显示在这里。可通过对话继续打磨，满意后再生成各平台内容。"
+          {...editableInputProps}
         />
       )}
 

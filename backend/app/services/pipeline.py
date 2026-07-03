@@ -373,7 +373,7 @@ class ContentPipeline:
                 platform="all",
                 headline=str(wechat_title)[:20],
                 subheadline="真实观察 · 温和提醒",
-                prompt="纪实风格，暖色乡村傍晚，真实生活场景，不要明显 AI 感",
+                prompt="纪实风格，暖色乡村傍晚，真实生活场景，横版构图 2.35:1，主体居中便于方形裁切，不要明显 AI 感",
                 after_paragraph=-1,
                 asset_index=0,
             )

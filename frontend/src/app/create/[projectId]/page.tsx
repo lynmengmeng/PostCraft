@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ContentEditor, type EditorTab } from "@/components/studio/ContentEditor";
+import { ChatComposer } from "@/components/studio/ChatComposer";
 import {
   PreviewPanel,
   getPlatformCopyText,
@@ -10,6 +11,7 @@ import {
 import { Icon } from "@/components/ui/Icon";
 import { ResizableColumns } from "@/components/ui/ResizableColumns";
 import { api, platformLabels, type ChatOptions } from "@/lib/api";
+import { WechatCoverEditor } from "@/components/studio/WechatCoverEditor";
 import {
   downloadImage,
   exportAllPlatforms,
@@ -17,6 +19,7 @@ import {
   resolveImageUrl,
   validateWechatContent,
 } from "@/lib/export";
+import { isWechatCoverAsset } from "@/lib/wechat-cover";
 import type { ContentProject, Platform } from "@/lib/types";
 import { copyWechatRichHtml, getImagePlacementLabel } from "@/lib/wechat-html";
 
@@ -55,7 +58,6 @@ export default function CreateStudioPage() {
   const [project, setProject] = useState<ContentProject | null>(null);
   const [editorTab, setEditorTab] = useState<EditorTab>("draft");
   const [previewPlatform, setPreviewPlatform] = useState<Platform>("wechat");
-  const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [streamingLines, setStreamingLines] = useState<string[]>([]);
@@ -66,7 +68,7 @@ export default function CreateStudioPage() {
   const [viewMode, setViewMode] = useState<StudioViewMode>("split");
   const [pendingAttachments, setPendingAttachments] = useState<string[]>([]);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
-  const chatFileRef = useRef<HTMLInputElement>(null);
+  const [chatMessage, setChatMessage] = useState("");
 
   useEffect(() => {
     api
@@ -87,10 +89,10 @@ export default function CreateStudioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.projectId]);
 
-  async function sendChat(text: string, current = project, options?: ChatOptions) {
-    if (!current || sending) return;
+  async function sendChat(text: string, current = project, options?: ChatOptions): Promise<boolean> {
+    if (!current || sending) return false;
     const attachmentUrls = options?.attachment_urls ?? pendingAttachments;
-    if (!text.trim() && !options?.action && attachmentUrls.length === 0) return;
+    if (!text.trim() && !options?.action && attachmentUrls.length === 0) return false;
     const outgoing =
       text.trim() ||
       (attachmentUrls.length > 0 ? "请处理我上传的配图素材，插入公众号合适位置" : "");
@@ -112,12 +114,14 @@ export default function CreateStudioPage() {
         },
       );
       setProject(result.project);
-      setMessage("");
       setPendingAttachments([]);
+      setChatMessage("");
       setStreamingLines([]);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "发送失败");
       setStreamingLines([]);
+      return false;
     } finally {
       setSending(false);
     }
@@ -160,13 +164,11 @@ export default function CreateStudioPage() {
       if (latest?.image_url) {
         setPendingAttachments((prev) => [...prev, latest.image_url!]);
       }
-      if (!message.trim()) {
-        setMessage("请把这张素材插入公众号合适的位置，并写上图注");
-      }
+      setChatMessage((prev) =>
+        prev.trim() ? prev : "请把这张素材插入公众号合适的位置，并写上图注",
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "上传失败");
-    } finally {
-      if (chatFileRef.current) chatFileRef.current.value = "";
     }
   }
 
@@ -513,68 +515,14 @@ export default function CreateStudioPage() {
                 </button>
               ))}
             </div>
-            {pendingAttachments.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {pendingAttachments.map((url) => (
-                  <div
-                    key={url}
-                    className="relative h-14 w-14 overflow-hidden rounded-lg border border-outline-variant/30"
-                  >
-                    <img
-                      src={resolveImageUrl(url)}
-                      alt="待发送素材"
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
-                ))}
-                <span className="self-center text-xs text-on-surface-variant">
-                  已选 {pendingAttachments.length} 张素材，发送后 AI 将处理配图位置
-                </span>
-              </div>
-            )}
-            <div className="relative">
-              <textarea
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    sendChat(message);
-                  }
-                }}
-                placeholder="继续打磨初稿、调整配图位置，或上传素材后说明插入位置…"
-                className="h-20 w-full resize-none rounded-xl border border-outline-variant/20 bg-surface-container-low p-3 pr-20 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-              />
-              <div className="absolute bottom-2 right-2 flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => chatFileRef.current?.click()}
-                  disabled={sending}
-                  className="text-on-surface-variant hover:text-primary disabled:opacity-50"
-                  title="上传配图素材"
-                >
-                  <Icon name="image" className="text-[20px]" />
-                </button>
-                <input
-                  ref={chatFileRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) void handleChatAssetUpload(file);
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => sendChat(message)}
-                  disabled={sending}
-                  className="text-primary disabled:opacity-50"
-                >
-                  <Icon name="send" className="text-[20px]" />
-                </button>
-              </div>
-            </div>
+            <ChatComposer
+              message={chatMessage}
+              onMessageChange={setChatMessage}
+              sending={sending}
+              pendingAttachments={pendingAttachments}
+              onSend={(text) => sendChat(text)}
+              onUploadAsset={(file) => void handleChatAssetUpload(file)}
+            />
             {error && <p className="text-xs text-error">{error}</p>}
           </div>
         </section>
@@ -730,7 +678,7 @@ export default function CreateStudioPage() {
             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low/50 p-4">
               <h3 className="text-sm font-medium text-on-surface-variant">封面与配图</h3>
               <p className="mt-2 text-xs leading-relaxed text-on-surface-variant/70">
-                发布清单：① 复制富文本粘贴正文 → ② 下载封面/配图上传至公众号 → ③ 填写标题与摘要 → ④ 保存草稿或发表
+                发布清单：① 复制富文本粘贴正文 → ② 调整封面构图并下载 900×383 上传至公众号 → ③ 填写标题与摘要 → ④ 保存草稿或发表
               </p>
               {project.cover_assets.length === 0 ? (
                 <p className="mt-3 text-sm leading-relaxed text-on-surface-variant">
@@ -751,6 +699,11 @@ export default function CreateStudioPage() {
                       : index === 0
                         ? "封面候选"
                         : "正文配图";
+                  const isCover = isWechatCoverAsset(
+                    asset,
+                    index,
+                    project.platforms.wechat.image_placements,
+                  );
                   return (
                     <div key={asset.id} className="mt-3 rounded-lg bg-surface-container-low p-3 text-sm">
                       <div className="mb-2 flex items-center justify-between gap-2">
@@ -762,7 +715,7 @@ export default function CreateStudioPage() {
                             已上传
                           </span>
                         )}
-                        {asset.image_url && (
+                        {asset.image_url && !isCover && (
                           <button
                             type="button"
                             onClick={() =>
@@ -778,14 +731,26 @@ export default function CreateStudioPage() {
                         )}
                       </div>
                       {asset.image_url ? (
-                        <img
-                          src={resolveImageUrl(asset.image_url)}
-                          alt={asset.headline}
-                          className="mb-2 aspect-[3/4] w-full rounded-lg object-cover"
-                        />
+                        isCover ? (
+                          <div className="mb-2">
+                            <WechatCoverEditor
+                              key={asset.image_url}
+                              imageUrl={asset.image_url}
+                              filename={`${asset.headline || "公众号封面"}.jpg`}
+                            />
+                          </div>
+                        ) : (
+                          <img
+                            src={resolveImageUrl(asset.image_url)}
+                            alt={asset.headline}
+                            className="mb-2 w-full rounded-lg object-cover"
+                          />
+                        )
                       ) : (
-                        <div className="mb-2 flex aspect-[3/4] w-full items-center justify-center rounded-lg bg-surface-container text-xs text-on-surface-variant">
-                          配图生成中或失败，可在对话中发送「生成封面配图」重试
+                        <div className="mb-2 flex aspect-[2.35/1] w-full items-center justify-center rounded-lg bg-surface-container text-xs text-on-surface-variant">
+                          {isCover
+                            ? "封面生成中或失败，可在对话中发送「生成封面配图」重试"
+                            : "配图生成中或失败，可在对话中发送「生成封面配图」重试"}
                         </div>
                       )}
                       <div className="font-medium">{asset.headline}</div>

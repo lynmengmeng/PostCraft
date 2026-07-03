@@ -66,6 +66,18 @@ nano .env   # 填入 DEEPSEEK_API_KEY
 LLM_PROVIDER=deepseek
 DEEPSEEK_API_KEY=你的密钥
 CORS_ORIGINS=https://postcraft.studyx.ai,http://localhost:3002
+JWT_SECRET=至少32位随机字符串
+AUTH_REQUIRED=true
+ALLOW_REGISTER=false
+```
+
+首次部署需创建测试账号（关闭公开注册后只能通过脚本添加）：
+
+```bash
+cd /opt/PostCraft
+python backend/scripts/create_user.py lyn 123456
+# 若服务器上已有登录前的历史数据，将其归属到该账号：
+python backend/scripts/migrate_legacy_data.py lyn
 ```
 
 改完后：`sudo systemctl restart postcraft`
@@ -103,7 +115,10 @@ POSTCRAFT_REFRESH_ENV=1 POSTCRAFT_ROOT=/opt/PostCraft bash deploy/install-fronte
 
 ```bash
 curl https://postcrafttest.studyx.ai/api/health
-# 浏览器打开 https://postcraft.studyx.ai
+curl https://postcrafttest.studyx.ai/api/auth/config
+# 未登录访问业务 API 应返回 401
+curl -s -o /dev/null -w "%{http_code}" https://postcrafttest.studyx.ai/api/projects
+# 浏览器打开 https://postcraft.studyx.ai 并登录
 ```
 
 在 UI 中发送「生成封面配图」，确认 `image_url` 为 `.png` 而非 `placeholder-*.svg`。
@@ -115,6 +130,7 @@ curl https://postcrafttest.studyx.ai/api/health
 | 打开 postcraft.studyx.ai 仍是 StudyX 主页 | DNS/nginx 未切到 PostCraft | 确认 nginx `server_name` 与 `proxy_pass :3002` |
 | 页面空白 / API 报错 | `.env.production` 仍是旧路径配置 | `POSTCRAFT_REFRESH_ENV=1` 重装前端 |
 | CORS 错误 | Origin 未加入 `CORS_ORIGINS` | 更新 `.env` 并 restart postcraft |
+| API 401 / 无法加载数据 | 未登录或 `AUTH_REQUIRED=true` | 浏览器登录；或 `create_user.py` 创建账号 |
 | 占位图 | OpenAI 调用失败 | `journalctl -u postcraft -f` |
 
 ## 相关文件

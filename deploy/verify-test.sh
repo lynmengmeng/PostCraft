@@ -41,6 +41,23 @@ else
   echo "      Hint: check nginx server_name postcrafttest.studyx.ai"
 fi
 
+# Auth config
+auth_cfg=$(curl -sf "${API_PUBLIC}/auth/config" 2>/dev/null || true)
+if echo "$auth_cfg" | grep -q '"auth_required"'; then
+  check "Auth config endpoint ($API_PUBLIC/auth/config)" true
+else
+  check "Auth config endpoint ($API_PUBLIC/auth/config)" false
+fi
+
+# Protected API should reject anonymous access when auth is required
+projects_code=$(curl -s -o /dev/null -w "%{http_code}" "${API_PUBLIC}/projects" 2>/dev/null || echo "000")
+if [[ "$projects_code" == "401" ]] || [[ "$projects_code" == "200" ]]; then
+  check "Projects API access control (HTTP $projects_code)" true
+else
+  check "Projects API access control (HTTP $projects_code)" false
+  echo "      Hint: expect 401 when AUTH_REQUIRED=true, 200 when false"
+fi
+
 # CORS preflight
 cors_headers=$(curl -sI -X OPTIONS \
   -H "Origin: ${ORIGIN}" \

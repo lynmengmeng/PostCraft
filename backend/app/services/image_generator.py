@@ -12,7 +12,11 @@ from app.services.openai_transport import build_async_openai_image_client
 logger = logging.getLogger(__name__)
 
 # gpt-image-2 @ 1K, 3:4 — 与 studyx backend_openai GPT_IMAGE_2_SIZES["1K"]["3:4"] 一致
-GPT_IMAGE_2_COVER_SIZE = "768x1024"
+GPT_IMAGE_2_XHS_COVER_SIZE = "768x1024"
+# 公众号头条封面 2.35:1（1280÷544≈2.35，均为 16 的倍数）
+GPT_IMAGE_2_WECHAT_COVER_SIZE = "1280x544"
+
+CoverAspect = str  # "wechat" | "xhs"
 
 
 class ImageGenerator:
@@ -37,12 +41,12 @@ class ImageGenerator:
     def configured(self) -> bool:
         return self.client is not None
 
-    async def generate(self, prompt: str) -> str:
+    async def generate(self, prompt: str, *, aspect: CoverAspect = "wechat") -> str:
         if not self.client:
-            return self._local_placeholder()
+            return self._local_placeholder(aspect)
 
         try:
-            return await self._generate_with_client(self.client, prompt)
+            return await self._generate_with_client(self.client, prompt, aspect)
         except AuthenticationError as exc:
             message = str(exc)
             if "ip_not_authorized" in message:
@@ -62,13 +66,19 @@ class ImageGenerator:
         except Exception as exc:
             logger.warning("Cover image generation failed (%s), using placeholder", exc)
 
-        return self._local_placeholder()
+        return self._local_placeholder(aspect)
 
-    async def _generate_with_client(self, client: AsyncOpenAI, prompt: str) -> str:
+    async def _generate_with_client(
+        self,
+        client: AsyncOpenAI,
+        prompt: str,
+        aspect: CoverAspect,
+    ) -> str:
+        size = GPT_IMAGE_2_WECHAT_COVER_SIZE if aspect == "wechat" else GPT_IMAGE_2_XHS_COVER_SIZE
         response = await client.images.generate(
             model=self.image_model,
             prompt=prompt[:900],
-            size=GPT_IMAGE_2_COVER_SIZE,
+            size=size,
             quality="medium",
             n=1,
         )
@@ -82,16 +92,20 @@ class ImageGenerator:
         path.write_bytes(base64.b64decode(image_b64))
         return f"/api/images/{filename}"
 
-    def _local_placeholder(self) -> str:
+    def _local_placeholder(self, aspect: CoverAspect = "wechat") -> str:
         filename = f"placeholder-{uuid4().hex}.svg"
         path = self.output_dir / filename
-        svg = """<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800" viewBox="0 0 600 800">
-  <rect width="600" height="800" fill="#f5f5f4"/>
-  <rect x="40" y="40" width="520" height="720" rx="16" fill="#e7e5e4" stroke="#d6d3d1"/>
-  <text x="300" y="360" fill="#78716c" font-size="28" text-anchor="middle" font-family="sans-serif">封面占位</text>
-  <text x="300" y="410" fill="#a8a29e" font-size="16" text-anchor="middle" font-family="sans-serif">OpenAI 配图 API 暂不可用</text>
-  <text x="300" y="450" fill="#a8a29e" font-size="14" text-anchor="middle" font-family="sans-serif">请检查 OPENAI_API_KEY 与网络</text>
+        if aspect == "wechat":
+            width, height = 1280, 544
+        else:
+            width, height = 600, 800
+        svg = f"""<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="{width}" height="{height}" fill="#f5f5f4"/>
+  <rect x="40" y="40" width="{width - 80}" height="{height - 80}" rx="16" fill="#e7e5e4" stroke="#d6d3d1"/>
+  <text x="{width // 2}" y="{height // 2 - 20}" fill="#78716c" font-size="28" text-anchor="middle" font-family="sans-serif">封面占位</text>
+  <text x="{width // 2}" y="{height // 2 + 30}" fill="#a8a29e" font-size="16" text-anchor="middle" font-family="sans-serif">OpenAI 配图 API 暂不可用</text>
+  <text x="{width // 2}" y="{height // 2 + 60}" fill="#a8a29e" font-size="14" text-anchor="middle" font-family="sans-serif">请检查 OPENAI_API_KEY 与网络</text>
 </svg>"""
         path.write_text(svg, encoding="utf-8")
         return f"/api/images/{filename}"

@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     cors_origins: str = "http://localhost:3002,http://127.0.0.1:3002"
 
+    # Auth — 开发/测试阶段建议 AUTH_REQUIRED=true、ALLOW_REGISTER=false
+    jwt_secret: str = "dev-change-me-in-production"
+    jwt_expire_minutes: int = 60 * 24 * 7
+    auth_required: bool = False
+    allow_register: bool = True
+
     database_url: str = ""
 
     def model_post_init(self, __context: object) -> None:

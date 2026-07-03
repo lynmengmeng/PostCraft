@@ -72,7 +72,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshConfig = useCallback(async () => {
     const cfg = await fetchAuthConfig();
     setConfig(cfg);
-    return cfg;
   }, []);
 
   useEffect(() => {

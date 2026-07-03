@@ -19,6 +19,99 @@ PostCraft API → api_keys.local.json（与 studyx 共享）→ OpenAI
 
 本地开发无法直连 OpenAI（Key 启用了 IP 白名单）时，可将 `frontend/.env.local` 的 `NEXT_PUBLIC_API_URL` 指向测试 API。
 
+## 日常更新流程
+
+已有测试环境时，按变更类型选择对应方式。
+
+### 场景 A：更新代码（最常见）
+
+本地改完代码后，先推到远端，再在测试 EC2 上拉取并重装。
+
+**1. 本地（Windows / macOS）**
+
+```bash
+git add .
+git commit -m "feat(studio): 你的变更说明"
+git push origin main   # 或你的功能分支，再在 EC2 上 checkout
+```
+
+**2. SSH 登录测试 EC2**
+
+```bash
+ssh user@<测试机 IP>
+cd /opt/PostCraft
+git pull
+```
+
+**3. 按改动范围执行安装脚本**
+
+| 改动范围 | 命令 |
+|----------|------|
+| 仅前端（UI、创作室等） | `POSTCRAFT_ROOT=/opt/PostCraft bash deploy/install-frontend.sh` |
+| 仅后端（API、模型、路由） | `POSTCRAFT_ROOT=/opt/PostCraft bash deploy/install-backend.sh` → `sudo systemctl restart postcraft` |
+| 前后端都有 | 先后端脚本 + restart，再前端脚本 |
+
+完整示例（前后端都更新）：
+
+```bash
+cd /opt/PostCraft
+git pull
+
+POSTCRAFT_ROOT=/opt/PostCraft bash deploy/install-backend.sh
+sudo systemctl restart postcraft
+
+POSTCRAFT_ROOT=/opt/PostCraft bash deploy/install-frontend.sh
+
+bash deploy/verify-test.sh
+```
+
+**4. 浏览器验证**
+
+- 打开 https://postcraft.studyx.ai 并登录（建议硬刷新 `Ctrl+Shift+R`）
+- 进入创作室，确认新功能/修复已生效
+- 可选：`curl https://postcrafttest.studyx.ai/api/health`
+
+> **注意**：若修改了 `frontend/.env.production` 或首次部署前端，需加 `POSTCRAFT_REFRESH_ENV=1`：
+>
+> ```bash
+> POSTCRAFT_REFRESH_ENV=1 POSTCRAFT_ROOT=/opt/PostCraft bash deploy/install-frontend.sh
+> ```
+
+### 场景 B：只同步初稿内容（不部署代码）
+
+本地写好初稿，想在测试环境继续 AI 对话时，用「初稿包」导入，无需 SSH：
+
+1. **本地**：创作室顶栏 → **导出初稿包** → 得到 `postcraft-draft-*.json`
+2. **测试环境**：打开 https://postcraft.studyx.ai 并登录
+3. **工作台** → **导入初稿包** → 选择 JSON → 自动进入创作室
+4. 继续对话；三平台内容与配图需在测试环境重新生成
+
+详见下文 [初稿跨环境继续创作](#初稿跨环境继续创作)。
+
+### 场景 C：本地开发连测试 API（不部署）
+
+本地跑 UI，API 与 OpenAI 配图走测试环境：
+
+在 `frontend/.env.local` 写入：
+
+```env
+NEXT_PUBLIC_API_URL=https://postcrafttest.studyx.ai/api
+```
+
+然后 `cd frontend && npm run dev`。无需 SSH，也不会更新测试机上的代码。
+
+### 更新后常见问题
+
+| 现象 | 可能原因 | 处理 |
+|------|----------|------|
+| 页面仍是旧 UI | EC2 未 `git pull` 或未跑 `install-frontend.sh` | 确认 pull 成功后再执行前端安装脚本 |
+| 页面空白 / API 报错 | `.env.production` 配置过期 | `POSTCRAFT_REFRESH_ENV=1` 重装前端 |
+| CORS 错误 | 前端域名未在 `CORS_ORIGINS` | 编辑 `/opt/PostCraft/.env` 后 `sudo systemctl restart postcraft` |
+| API 401 | 未登录 | 浏览器登录测试账号 |
+| 配图仍是占位图 | OpenAI 调用失败 | `journalctl -u postcraft -f` 查看日志 |
+
+---
+
 ## 与运维对齐清单
 
 部署前请与运维确认以下项（可在工单中直接粘贴）：
@@ -32,7 +125,7 @@ PostCraft API → api_keys.local.json（与 studyx 共享）→ OpenAI
 
 > 若 `postcraft.studyx.ai` 当前指向 StudyX 主站，需运维将该域名改指 PostCraft 前端（`:3002`），或确认使用独立子域名。
 
-## 快速部署（SSH 到测试 EC2）
+## 首次部署（SSH 到测试 EC2）
 
 ```bash
 cd /opt/PostCraft

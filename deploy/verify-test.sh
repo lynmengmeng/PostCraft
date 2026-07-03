@@ -3,9 +3,9 @@
 set -euo pipefail
 
 API_LOCAL="${API_LOCAL:-http://127.0.0.1:18231/api}"
-API_PUBLIC="${API_PUBLIC:-https://test.studyx.ai/postcraft-api/api}"
-WEB_PUBLIC="${WEB_PUBLIC:-https://test.studyx.ai/postcraft}"
-ORIGIN="${CORS_ORIGIN:-https://test.studyx.ai}"
+API_PUBLIC="${API_PUBLIC:-https://postcrafttest.studyx.ai/api}"
+WEB_PUBLIC="${WEB_PUBLIC:-https://postcraft.studyx.ai}"
+ORIGIN="${CORS_ORIGIN:-https://postcraft.studyx.ai}"
 
 pass=0
 fail=0
@@ -38,7 +38,7 @@ if curl -sf "${API_PUBLIC}/health" >/dev/null 2>&1; then
   check "Public API health ($API_PUBLIC/health)" true
 else
   check "Public API health ($API_PUBLIC/health)" false
-  echo "      Hint: check nginx location /postcraft-api/ on test.studyx.ai"
+  echo "      Hint: check nginx server_name postcrafttest.studyx.ai"
 fi
 
 # CORS preflight
@@ -50,7 +50,7 @@ if echo "$cors_headers" | grep -qi "access-control-allow-origin"; then
   check "CORS headers for Origin=${ORIGIN}" true
 else
   check "CORS headers for Origin=${ORIGIN}" false
-  echo "      Hint: add origin to CORS_ORIGINS in /opt/postcraft/.env"
+  echo "      Hint: add origin to CORS_ORIGINS in .env"
 fi
 
 # Frontend reachable
@@ -58,7 +58,7 @@ if curl -sf -o /dev/null "${WEB_PUBLIC}" 2>/dev/null; then
   check "Frontend reachable ($WEB_PUBLIC)" true
 else
   check "Frontend reachable ($WEB_PUBLIC)" false
-  echo "      Hint: pm2 status postcraft-web && nginx location /postcraft/ on test.studyx.ai"
+  echo "      Hint: pm2 status postcraft-web && nginx server_name postcraft.studyx.ai"
 fi
 
 # systemd active
@@ -69,7 +69,7 @@ else
 fi
 
 # api_keys file
-keys_path="${API_KEYS_FILE:-/opt/postcraft/config/api_keys.local.json}"
+keys_path="${API_KEYS_FILE:-/opt/PostCraft/config/api_keys.local.json}"
 if [[ -f "$keys_path" ]] || [[ -L "$keys_path" ]]; then
   check "api_keys.local.json present ($keys_path)" true
 else

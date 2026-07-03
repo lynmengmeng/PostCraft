@@ -8,11 +8,10 @@ PORT="${POSTCRAFT_WEB_PORT:-3002}"
 
 write_default_env_production() {
   cat > .env.production <<'EOF'
-NEXT_PUBLIC_BASE_PATH=/postcraft
-NEXT_PUBLIC_API_URL=https://test.studyx.ai/postcraft-api/api
-NEXT_PUBLIC_SITE_URL=https://test.studyx.ai/postcraft
+NEXT_PUBLIC_API_URL=https://postcrafttest.studyx.ai/api
+NEXT_PUBLIC_SITE_URL=https://postcraft.studyx.ai
 EOF
-  echo "Created .env.production with default test values"
+  echo "Created .env.production with default subdomain values"
 }
 
 if [[ ! -d "$ROOT/frontend" ]]; then
@@ -26,13 +25,15 @@ echo "==> PostCraft frontend install (root: $ROOT, port: $PORT)"
 
 cd "$ROOT/frontend"
 
-if [[ ! -f .env.production ]]; then
+if [[ "${POSTCRAFT_REFRESH_ENV:-}" == "1" ]] || [[ ! -f .env.production ]]; then
   if [[ -f .env.test.example ]]; then
     cp .env.test.example .env.production
-    echo "Created .env.production from .env.test.example"
+    echo "Wrote .env.production from .env.test.example"
   else
     write_default_env_production
   fi
+else
+  echo "Using existing .env.production (set POSTCRAFT_REFRESH_ENV=1 to overwrite)"
 fi
 
 npm ci

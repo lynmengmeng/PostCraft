@@ -85,7 +85,23 @@ def test_ensure_xiaohongshu_carousel_assets_creates_from_body():
     )
     assets = ensure_xiaohongshu_carousel_assets(project, pipeline)
     xhs_assets = [a for a in assets if a.platform == "xiaohongshu"]
-    assert len(xhs_assets) >= 3
+    assert 1 <= len(xhs_assets) <= 6
+
+
+def test_ensure_xiaohongshu_carousel_single_image_body():
+    pipeline = ContentPipeline(_FakeLLM(), _FakeSkills())  # type: ignore[arg-type]
+    project = ContentProject(
+        inspiration="测试",
+        platforms={
+            "xiaohongshu": XiaohongshuContent(
+                title="小确幸",
+                body="今天晚霞很美，心情一下子好了起来 🌅",
+            )
+        },
+    )
+    assets = ensure_xiaohongshu_carousel_assets(project, pipeline)
+    xhs_assets = [a for a in assets if a.platform == "xiaohongshu"]
+    assert len(xhs_assets) == 1
 
 
 def test_sync_xiaohongshu_from_assets():

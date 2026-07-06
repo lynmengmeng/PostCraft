@@ -51,6 +51,57 @@ _STYLE_BEST_FOR: dict[str, str] = {
 }
 
 _DEFAULT_STYLE = "warm_documentary_photography_of_a_rural_sunset_over"
+XHS_MIN_PAGES = 1
+XHS_MAX_PAGES = 6
+
+
+def split_body_sections(body: str) -> list[str]:
+    return [s.strip() for s in re.split(r"\n{2,}", body or "") if s.strip()]
+
+
+def extract_xiaohongshu_point_sections(body: str) -> list[str]:
+    sections = split_body_sections(body)
+    points: list[str] = []
+    for section in sections:
+        if re.search(r"【要点|^[·•]|^\d+[\.、）\)]", section, re.M):
+            points.append(section)
+    return points
+
+
+def estimate_xiaohongshu_page_count(title: str, body: str) -> int:
+    """按内容复杂度估算配图张数：短内容 1 张，干货轮播最多 6 张。"""
+    text = (body or "").strip()
+    if not text:
+        return 1
+
+    sections = split_body_sections(text)
+    points = extract_xiaohongshu_point_sections(text)
+    body_len = len(text)
+
+    if body_len <= 180 and len(sections) <= 2 and len(points) <= 1:
+        return 1
+
+    if body_len <= 320 and len(points) <= 1:
+        return 2
+
+    content_slots = len(points) if points else max(1, len(sections) - 1)
+    content_slots = min(4, content_slots)
+    wants_summary = body_len > 300 or bool(re.search(r"评论|收藏|聊聊|同感|互动", text))
+    total = 1 + content_slots + (1 if wants_summary and content_slots >= 2 else 0)
+    return max(XHS_MIN_PAGES, min(XHS_MAX_PAGES, total))
+
+
+def trim_xiaohongshu_pages(pages: list[dict], *, max_pages: int = XHS_MAX_PAGES) -> list[dict]:
+    if len(pages) <= max_pages:
+        return pages
+    cover = pages[0]
+    summary = pages[-1] if pages[-1].get("role") == "summary" else None
+    middle = pages[1:-1] if summary else pages[1:]
+    budget = max_pages - 1 - (1 if summary else 0)
+    trimmed = [cover, *middle[: max(0, budget)]]
+    if summary and len(trimmed) < max_pages:
+        trimmed.append(summary)
+    return trimmed[:max_pages]
 
 
 @dataclass(frozen=True)

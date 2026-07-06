@@ -11,7 +11,8 @@ interface CoverAssetSlotProps {
   asset: CoverAsset;
   index: number;
   placementLabel: string;
-  isCover: boolean;
+  isCover?: boolean;
+  variant?: "wechat" | "xiaohongshu";
   onUpdate: (project: ContentProject) => void;
 }
 
@@ -20,11 +21,14 @@ export function CoverAssetSlot({
   asset,
   index,
   placementLabel,
-  isCover,
+  isCover = false,
+  variant = "wechat",
   onUpdate,
 }: CoverAssetSlotProps) {
   const assetIndex = asset.asset_index ?? index;
   const pending = isPlaceholderAsset(asset) || !hasRealImage(asset);
+  const isXhs = variant === "xiaohongshu";
+  const showWechatCoverEditor = !isXhs && isCover;
   const { fileInputRef, uploading, generating, error, handleUpload, handleGenerate, openFilePicker } =
     useCoverAssetActions(projectId, asset, assetIndex, onUpdate);
 
@@ -44,7 +48,7 @@ export function CoverAssetSlot({
             AI 生成
           </span>
         )}
-        {hasRealImage(asset) && !isCover && (
+        {hasRealImage(asset) && (!isCover || isXhs) && (
           <button
             type="button"
             onClick={() =>
@@ -58,7 +62,7 @@ export function CoverAssetSlot({
       </div>
 
       {hasRealImage(asset) ? (
-        isCover ? (
+        showWechatCoverEditor ? (
           <div className="mb-2">
             <WechatCoverEditor
               key={asset.image_url}
@@ -70,13 +74,13 @@ export function CoverAssetSlot({
           <img
             src={resolveImageUrl(asset.image_url)}
             alt={asset.headline}
-            className="mb-2 w-full rounded-lg object-cover"
+            className={`mb-2 w-full rounded-lg object-cover ${isXhs ? "aspect-[3/4] max-w-[220px]" : ""}`}
           />
         )
       ) : (
         <div
           className={`mb-2 flex w-full flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-stone-300 bg-stone-50 text-stone-500 ${
-            isCover ? "aspect-[2.35/1]" : "aspect-[4/3]"
+            isXhs ? "aspect-[3/4] max-w-[220px]" : isCover ? "aspect-[2.35/1]" : "aspect-[4/3]"
           }`}
         >
           {asset.image_url && isPlaceholderAsset(asset) ? (

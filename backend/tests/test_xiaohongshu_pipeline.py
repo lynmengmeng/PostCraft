@@ -11,6 +11,19 @@ class _FakeSkills:
         return ""
 
 
+def test_normalize_xiaohongshu_payload_single_image():
+    pipeline = ContentPipeline(_FakeLLM(), _FakeSkills())  # type: ignore[arg-type]
+    payload = pipeline._normalize_xiaohongshu_payload(
+        {
+            "title": "今天的小确幸",
+            "body": "回村路上看到晚霞，突然觉得很治愈 🌅",
+            "tags": ["生活"],
+        }
+    )
+    assert len(payload["image_pages"]) == 1
+    assert payload["image_pages"][0]["role"] == "cover"
+
+
 def test_normalize_xiaohongshu_payload_builds_image_pages():
     pipeline = ContentPipeline(_FakeLLM(), _FakeSkills())  # type: ignore[arg-type]
     style = get_style("warm_documentary_photography_of_a_rural_sunset_over")
@@ -22,7 +35,8 @@ def test_normalize_xiaohongshu_payload_builds_image_pages():
         }
     )
     assert payload["cover_style"]
-    assert len(payload["image_pages"]) >= 3
+    assert len(payload["image_pages"]) >= 2
+    assert len(payload["image_pages"]) <= 6
     assert payload["image_pages"][0]["role"] == "cover"
     assert all(page.get("prompt") for page in payload["image_pages"])
     assert payload["tags"] == ["生活观察", "农村"]

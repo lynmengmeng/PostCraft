@@ -22,7 +22,8 @@ import { ResizableColumns } from "@/components/ui/ResizableColumns";
 import { api, platformLabels, type ChatOptions } from "@/lib/api";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { trackEvent } from "@/lib/metrics";
-import { CoverAssetSlot } from "@/components/studio/CoverAssetSlot";
+import { XiaohongshuCarouselPanel } from "@/components/studio/XiaohongshuCarouselPanel";
+import { WechatCoverAssetsPanel } from "@/components/studio/WechatCoverAssetsPanel";
 import {
   exportAllPlatforms,
   downloadDraftBundle,
@@ -30,7 +31,6 @@ import {
   resolveImageUrl,
   validateWechatContent,
 } from "@/lib/export";
-import { isWechatCoverAsset } from "@/lib/wechat-cover";
 import {
   ALL_PLATFORMS,
   getChatContextPlatform,
@@ -41,7 +41,7 @@ import {
   type StudioViewMode,
 } from "@/lib/studio-utils";
 import type { ChatMessage, ContentProject, Platform } from "@/lib/types";
-import { copyWechatRichHtml, getImagePlacementLabel } from "@/lib/wechat-html";
+import { copyWechatRichHtml } from "@/lib/wechat-html";
 
 const HEALTH_DISCLAIMER =
   "以上仅为个人观察与生活记录，不构成医疗建议。如有健康问题，请咨询专业医生。";
@@ -273,22 +273,6 @@ export default function CreateStudioPage() {
       setSending(false);
       setRegeneratingId(null);
       chatAbortRef.current = null;
-    }
-  }
-
-  async function handleGenerateXhsCarousel() {
-    if (!project || generatingXhsCarousel) return;
-    setGeneratingXhsCarousel(true);
-    setError("");
-    try {
-      const saved = await api.generateXiaohongshuCarousel(project.id);
-      setProject(saved);
-      setActionInfo(`已批量生成 ${saved.platforms.xiaohongshu.carousel_images?.length ?? 0} 张轮播图`);
-      setTimeout(() => setActionInfo(""), 3000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "批量生成失败");
-    } finally {
-      setGeneratingXhsCarousel(false);
     }
   }
 
@@ -763,69 +747,25 @@ export default function CreateStudioPage() {
             )}
           </div>
 
-          <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low/50 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <h3 className="text-sm font-medium text-on-surface-variant">封面与配图</h3>
-                <p className="mt-2 text-xs leading-relaxed text-on-surface-variant/70">
-                  生成平台内容后会先出现默认占位图。确认正文无误后，在每张占位上「上传图片」或「AI 生成」。
-                </p>
-              </div>
-              {project.platforms.xiaohongshu.body && (
-                <button
-                  type="button"
-                  disabled={generatingXhsCarousel || sending}
-                  onClick={() => void handleGenerateXhsCarousel()}
-                  className="shrink-0 rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-                >
-                  {generatingXhsCarousel ? "轮播生成中…" : "一键生成全部轮播图"}
-                </button>
-              )}
+          {editorTab === "xiaohongshu" && (
+            <XiaohongshuCarouselPanel
+              project={project}
+              generating={generatingXhsCarousel}
+              onGeneratingChange={setGeneratingXhsCarousel}
+              onUpdate={(saved) => setProject(saved)}
+              onError={setError}
+            />
+          )}
+
+          {editorTab === "wechat" && (
+            <WechatCoverAssetsPanel project={project} onUpdate={(saved) => setProject(saved)} />
+          )}
+
+          {editorTab === "draft" && project.cover_assets.length > 0 && (
+            <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low/50 p-4 text-sm text-on-surface-variant">
+              切换到「公众号」或「小红书」Tab 管理对应平台的配图。
             </div>
-            {project.cover_assets.length === 0 ? (
-              <p className="mt-3 text-sm leading-relaxed text-on-surface-variant">
-                生成任意平台内容后会自动创建封面与配图占位。也可在对话中发送「生成封面配图」。
-              </p>
-            ) : (
-              project.cover_assets.map((asset, index) => {
-                const placement = project.platforms.wechat.image_placements?.find(
-                  (p) => p.asset_index === (asset.asset_index ?? index),
-                );
-                const placementLabel = placement
-                  ? getImagePlacementLabel(placement, asset)
-                  : asset.platform === "xiaohongshu"
-                    ? `小红书第${(asset.after_paragraph ?? index) + 1}张`
-                  : asset.after_paragraph != null && asset.after_paragraph >= 0
-                    ? getImagePlacementLabel(
-                        {
-                          after_paragraph: asset.after_paragraph,
-                          asset_index: index,
-                          caption: asset.caption || "",
-                        },
-                        asset,
-                      )
-                    : index === 0
-                      ? "封面候选"
-                      : "正文配图";
-                const isCover = isWechatCoverAsset(
-                  asset,
-                  index,
-                  project.platforms.wechat.image_placements,
-                );
-                return (
-                  <CoverAssetSlot
-                    key={asset.id}
-                    projectId={project.id}
-                    asset={asset}
-                    index={index}
-                    placementLabel={placementLabel}
-                    isCover={isCover}
-                    onUpdate={(saved) => setProject(saved)}
-                  />
-                );
-              })
-            )}
-          </div>
+          )}
 
           {editorTab === "wechat" && wechatChecks.length > 0 && (
             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low/50 p-4">

@@ -421,7 +421,7 @@ class ChatOrchestrator:
                     list(targets),
                     on_delta=on_delta,
                 )
-                if not project.cover_assets:
+                if not project.cover_assets or "xiaohongshu" in targets or "wechat" in targets:
                     patch_data = await self._ensure_cover_assets(
                         project, patch_data, style_profile
                     )
@@ -432,8 +432,13 @@ class ChatOrchestrator:
                     )
                 label = "、".join(targets)
                 summary = f"已根据当前初稿生成 {label} 内容。"
-                if not project.cover_assets and patch_data.get("cover_assets"):
-                    summary += " 已同步生成封面与配图占位。"
+                if ("xiaohongshu" in targets or "wechat" in targets) and patch_data.get("cover_assets"):
+                    if targets == ["xiaohongshu"]:
+                        summary += " 已同步生成小红书轮播配图占位。"
+                    elif targets == ["wechat"]:
+                        summary += " 已同步生成公众号封面与配图占位。"
+                    else:
+                        summary += " 已同步生成封面与配图占位。"
                 return ContentPatch(
                     intent="generate_platform",
                     target_platforms=targets,  # type: ignore[arg-type]
@@ -732,16 +737,28 @@ class ChatOrchestrator:
         platforms = self._platform_dict_from_patch(project, patch_data)
         if not platforms:
             return patch_data
-        result = self._assign_placeholder_images(
-            {
-                **patch_data,
-                "cover_assets": await self.pipeline._generate_cover_prompts(
-                    project,
-                    style_profile,
-                    platforms,
-                ),
-            }
+
+        regenerated = {key for key in platforms if key in {"wechat", "xiaohongshu"}}
+        new_assets = await self.pipeline._generate_cover_prompts(
+            project,
+            style_profile,
+            platforms,
         )
+        existing = [a.model_dump(mode="json") for a in project.cover_assets]
+        if patch_data.get("cover_assets"):
+            existing = list(patch_data["cover_assets"])
+
+        merged: list[dict[str, Any]] = []
+        for asset in existing:
+            platform = asset.get("platform")
+            if platform == "xiaohongshu" and "xiaohongshu" in regenerated:
+                continue
+            if platform in {"wechat", "all"} and "wechat" in regenerated:
+                continue
+            merged.append(asset)
+        merged.extend(new_assets)
+
+        result = self._assign_placeholder_images({**patch_data, "cover_assets": merged})
         return self._finalize_wechat_in_patch(result)
 
     def _assign_placeholder_images(self, patch_data: dict[str, Any]) -> dict[str, Any]:
@@ -750,12 +767,9 @@ class ChatOrchestrator:
             return patch_data
 
         updated_assets: list[dict[str, Any]] = []
-        cover_url = ""
         for index, asset in enumerate(assets):
             if asset.get("image_url") and asset.get("source") not in ("placeholder", None):
                 updated_assets.append(asset)
-                if index == 0 or (asset.get("after_paragraph") is not None and asset.get("after_paragraph", 0) < 0):
-                    cover_url = asset.get("image_url") or cover_url
                 continue
 
             after_paragraph = asset.get("after_paragraph", -1)
@@ -770,16 +784,9 @@ class ChatOrchestrator:
                 "source": "placeholder",
             }
             updated_assets.append(updated)
-            if is_cover:
-                cover_url = placeholder_url
 
         patch_data["cover_assets"] = updated_assets
         patch_data = _sync_xiaohongshu_images(patch_data)
-        if cover_url:
-            if "platforms.xiaohongshu" in patch_data and isinstance(patch_data["platforms.xiaohongshu"], dict):
-                patch_data["platforms.xiaohongshu"]["cover_image"] = cover_url
-            elif "platforms.xiaohongshu" not in patch_data:
-                patch_data["platforms.xiaohongshu.cover_image"] = cover_url
         return patch_data
 
     def _finalize_wechat_in_patch(

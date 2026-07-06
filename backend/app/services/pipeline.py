@@ -25,8 +25,13 @@ from app.services.wechat_assets import (
 )
 from app.services.xiaohongshu_styles import (
     content_page_prompt,
+    estimate_xiaohongshu_page_count,
+    extract_xiaohongshu_point_sections,
     pick_style_for_content,
     styles_reference_block,
+    trim_xiaohongshu_pages,
+    XHS_MAX_PAGES,
+    split_body_sections,
 )
 
 StreamCallback = Callable[[str], Awaitable[None]] | None
@@ -500,7 +505,23 @@ class ContentPipeline:
         style_profile: AuthorStyleProfile,
         platforms: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        wechat = platforms.get("wechat", {})
+        assets: list[dict[str, Any]] = []
+
+        if "wechat" in platforms:
+            assets.extend(self._generate_wechat_cover_assets(platforms.get("wechat", {}), project))
+
+        if "xiaohongshu" in platforms:
+            xhs = platforms.get("xiaohongshu", {})
+            if isinstance(xhs, dict) and xhs.get("body"):
+                assets.extend(self._generate_xiaohongshu_carousel_assets(xhs, project))
+
+        return assets
+
+    def _generate_wechat_cover_assets(
+        self,
+        wechat: dict[str, Any],
+        project: ContentProject,
+    ) -> list[dict[str, Any]]:
         wechat_title = wechat.get("title", project.title)
         placements = wechat.get("image_placements") or []
         assets: list[dict[str, Any]] = []
@@ -526,7 +547,7 @@ class ContentPipeline:
         else:
             headline, subheadline = self._cover_copy_from_wechat(wechat, str(wechat_title))
             asset = CoverAsset(
-                platform="all",
+                platform="wechat",
                 headline=headline,
                 subheadline=subheadline,
                 prompt="简洁纪实风格，暖色生活场景，横版构图 2.35:1，主体居中便于方形裁切，少装饰，不要明显 AI 感",
@@ -535,10 +556,6 @@ class ContentPipeline:
                 source="placeholder",
             )
             assets.append(asset.model_dump(mode="json"))
-
-        xhs = platforms.get("xiaohongshu", {})
-        if isinstance(xhs, dict) and xhs.get("body"):
-            assets.extend(self._generate_xiaohongshu_carousel_assets(xhs, project))
 
         return assets
 
@@ -581,7 +598,7 @@ class ContentPipeline:
 
         pages_raw = payload.get("image_pages") or []
         pages: list[dict[str, Any]] = []
-        for index, item in enumerate(pages_raw[:9]):
+        for index, item in enumerate(pages_raw[:XHS_MAX_PAGES]):
             if not isinstance(item, dict):
                 continue
             page = XiaohongshuImagePage.model_validate(
@@ -592,8 +609,10 @@ class ContentPipeline:
             )
             pages.append(page.model_dump(mode="json"))
 
-        if len(pages) < 3:
+        if not pages:
             pages = self._build_xiaohongshu_pages_from_body(title, body, style)
+        elif len(pages) > XHS_MAX_PAGES:
+            pages = trim_xiaohongshu_pages(pages)
 
         for index, page in enumerate(pages):
             if not page.get("prompt"):
@@ -624,19 +643,45 @@ class ContentPipeline:
         body: str,
         style,
     ) -> list[dict[str, Any]]:
-        sections = [s.strip() for s in re.split(r"\n{2,}", body) if s.strip()]
+        target = estimate_xiaohongshu_page_count(title, body)
+        sections = split_body_sections(body)
+        points = extract_xiaohongshu_point_sections(body)
+        hook = sections[0][:40] if sections else ""
+
+        if target == 1:
+            return [
+                {
+                    "page": 1,
+                    "role": "cover",
+                    "headline": title[:20],
+                    "subheadline": hook[:30],
+                    "body_text": body[:120],
+                    "prompt": style.image_prompt(
+                        headline=title[:16],
+                        subheadline=hook[:24],
+                        extra="单图笔记，信息集中在一页",
+                    ),
+                }
+            ]
+
         pages: list[dict[str, Any]] = [
             {
                 "page": 1,
                 "role": "cover",
                 "headline": title[:20],
-                "subheadline": sections[0][:30] if sections else "",
+                "subheadline": hook[:30],
                 "body_text": "",
-                "prompt": style.image_prompt(headline=title[:16], subheadline=sections[0][:24] if sections else ""),
+                "prompt": style.image_prompt(headline=title[:16], subheadline=hook[:24]),
             }
         ]
-        content_sections = sections[1:] if len(sections) > 1 else sections
-        for index, section in enumerate(content_sections[:5], start=2):
+
+        content_sources = points or (sections[1:] if len(sections) > 1 else sections)
+        wants_summary = target >= 3 and (
+            len(body) > 300 or bool(re.search(r"评论|收藏|聊聊|同感", body))
+        )
+        content_budget = target - 1 - (1 if wants_summary else 0)
+
+        for index, section in enumerate(content_sources[:content_budget], start=2):
             headline = section.split("\n", 1)[0].strip("·-—【】 ")[:20] or f"要点{index - 1}"
             pages.append(
                 {
@@ -653,22 +698,25 @@ class ContentPipeline:
                     ),
                 }
             )
-        pages.append(
-            {
-                "page": len(pages) + 1,
-                "role": "summary",
-                "headline": "收藏备用",
-                "subheadline": "有问题评论区见",
-                "body_text": "互动引导页",
-                "prompt": content_page_prompt(
-                    headline="收藏备用",
-                    body_text="有问题评论区见",
-                    page_index=len(pages) + 1,
-                    style=style,
-                ),
-            }
-        )
-        return pages[:7]
+
+        if wants_summary and len(pages) < target:
+            pages.append(
+                {
+                    "page": len(pages) + 1,
+                    "role": "summary",
+                    "headline": "收藏备用",
+                    "subheadline": "有问题评论区见",
+                    "body_text": "互动引导页",
+                    "prompt": content_page_prompt(
+                        headline="收藏备用",
+                        body_text="有问题评论区见",
+                        page_index=len(pages) + 1,
+                        style=style,
+                    ),
+                }
+            )
+
+        return pages[:XHS_MAX_PAGES]
 
     def _generate_xiaohongshu_carousel_assets(
         self,
@@ -690,7 +738,7 @@ class ContentPipeline:
 
         assets: list[dict[str, Any]] = []
         base_index = 100
-        for offset, page in enumerate(pages[:7]):
+        for offset, page in enumerate(pages[:XHS_MAX_PAGES]):
             if not isinstance(page, dict):
                 continue
             role = str(page.get("role") or "content")
@@ -792,11 +840,11 @@ class ContentPipeline:
                 "- 结尾留互动引导（如「你有同感吗？」「评论区聊聊」）\n"
                 "- 正文 300-800 字，标签 3-6 个\n"
                 "- 必须输出 cover_style（从风格库选 1 个 id）\n"
-                "- 必须输出 image_pages：5-7 张图方案\n"
-                "  · 第 1 张 role=cover：封面 headline+subheadline\n"
-                "  · 中间 role=content：每张一个判断点/要点，headline ≤12字，body_text 为该页要点\n"
-                "  · 最后 1 张 role=summary：总结+互动引导\n"
-                "  · 每页 prompt 描述该张图的视觉风格（3:4竖版、排版清爽）"
+                "- 必须输出 image_pages：1-6 张图方案（按内容复杂度决定，短感悟可 1 张，干货轮播最多 6 张）\n"
+                "  · 仅 1 张时：role=cover，标题+核心信息合一\n"
+                "  · 2-6 张时：第 1 张 role=cover；中间 role=content 每张一个要点；可选最后 1 张 role=summary\n"
+                "  · 每张 headline ≤12字，body_text 为该页要点\n"
+                "  · 每页 prompt 描述 3:4 竖版构图与视觉风格"
             )
         if skill_name == "douyin-converter":
             return (

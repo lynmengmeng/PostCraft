@@ -589,8 +589,6 @@ async def generate_asset_image(
             "source": "generated",
         }
     )
-    if is_cover or asset_index == 0 or is_xhs:
-        project.platforms["xiaohongshu"].cover_image = image_url
 
     wechat = project.platforms["wechat"]
     wechat_data = finalize_wechat_content(

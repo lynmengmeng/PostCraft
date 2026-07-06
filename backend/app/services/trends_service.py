@@ -950,7 +950,7 @@ class TrendsService:
         platform = platform or source
         tips = {
             "wechat": "写单问题长文，搜索型标题，结尾给可执行建议。",
-            "xiaohongshu": "拆成 5-7 张图，每页一个判断点，口语化。",
+            "xiaohongshu": "按内容拆成 1-6 张图，短内容可单图，每页一个判断点，口语化。",
             "douyin": "60-90 秒口播，开头 3 秒抛痛点问题。",
         }
         if platform.startswith("weibo"):

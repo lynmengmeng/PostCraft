@@ -185,26 +185,46 @@ def build_mock_platforms(
         patch[f"platforms.{platform}"] = payload["platforms"][platform].model_dump(mode="json")  # type: ignore[index]
     if with_titles or len(targets) >= 3 or not project.titles:
         patch["titles"] = [item.model_dump(mode="json") for item in payload["titles"]]  # type: ignore[index]
-        patch["cover_assets"] = [
-            CoverAsset(
-                platform="wechat",
-                headline=str(payload["wechat_title"])[:20],
-                subheadline="回村观察",
-                prompt="纪实风格，农村傍晚，真实生活场景",
-                after_paragraph=1,
-                caption="回村观察",
-                asset_index=0,
-            ).model_dump(mode="json"),
-            CoverAsset(
-                platform="wechat",
-                headline=str(payload["wechat_title"])[:20],
-                subheadline="日常细节",
-                prompt="纪实风格，农村老人日常，暖色调",
-                after_paragraph=4,
-                caption="日常细节",
-                asset_index=1,
-            ).model_dump(mode="json"),
-        ]
+    cover_assets: list[dict] = []
+    if "wechat" in targets:
+        cover_assets.extend(
+            [
+                CoverAsset(
+                    platform="wechat",
+                    headline=str(payload["wechat_title"])[:20],
+                    subheadline="回村观察",
+                    prompt="纪实风格，农村傍晚，真实生活场景",
+                    after_paragraph=1,
+                    caption="回村观察",
+                    asset_index=0,
+                ).model_dump(mode="json"),
+                CoverAsset(
+                    platform="wechat",
+                    headline=str(payload["wechat_title"])[:20],
+                    subheadline="日常细节",
+                    prompt="纪实风格，农村老人日常，暖色调",
+                    after_paragraph=4,
+                    caption="日常细节",
+                    asset_index=1,
+                ).model_dump(mode="json"),
+            ]
+        )
+    if "xiaohongshu" in targets:
+        xhs = payload["platforms"]["xiaohongshu"]  # type: ignore[index]
+        for index, page in enumerate(xhs.get("image_pages") or []):
+            cover_assets.append(
+                CoverAsset(
+                    platform="xiaohongshu",
+                    headline=str(page.get("headline") or "")[:20],
+                    subheadline=str(page.get("subheadline") or ""),
+                    prompt=str(page.get("prompt") or "小红书轮播配图"),
+                    after_paragraph=index,
+                    caption=str(page.get("headline") or f"轮播第{index + 1}张"),
+                    asset_index=100 + index,
+                ).model_dump(mode="json")
+            )
+    if cover_assets:
+        patch["cover_assets"] = cover_assets
     label = "、".join(targets)
     return ContentPatch(
         intent="generate_platform" if len(targets) == 1 else "generate_all",
@@ -252,7 +272,7 @@ def build_mock_titles(project: ContentProject, count: int = 10) -> ContentPatch:
 def build_mock_cover_assets(project: ContentProject) -> ContentPatch:
     title = project.platforms["wechat"].title or project.title
     asset = CoverAsset(
-        platform="all",
+        platform="wechat",
         headline=title[:20] or "生活观察",
         subheadline="真实 · 温和 · 有温度",
         prompt="纪实摄影，暖色乡村生活，真实人物与环境，避免营销海报感",

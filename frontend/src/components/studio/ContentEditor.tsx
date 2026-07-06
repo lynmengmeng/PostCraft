@@ -25,6 +25,7 @@ interface ContentEditorProps {
 export function ContentEditor({ project, editorTab, onUpdate, onSaveError }: ContentEditorProps) {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [uploading, setUploading] = useState(false);
+  const [generatingCarousel, setGeneratingCarousel] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const wechatBodyRef = useRef<HTMLTextAreaElement>(null);
   const draftTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -212,6 +213,23 @@ export function ContentEditor({ project, editorTab, onUpdate, onSaveError }: Con
     }
   }
 
+  async function handleGenerateCarousel() {
+    setGeneratingCarousel(true);
+    try {
+      const saved = await api.generateXiaohongshuCarousel(project.id);
+      onUpdate(saved);
+    } catch (err) {
+      onSaveError?.(err instanceof Error ? err.message : "批量生成失败");
+    } finally {
+      setGeneratingCarousel(false);
+    }
+  }
+
+  const xhsCarouselCount =
+    project.cover_assets.filter((a) => a.platform === "xiaohongshu").length ||
+    project.platforms.xiaohongshu.image_pages?.length ||
+    0;
+
   function updateDraft(value: string) {
     const textarea = draftTextareaRef.current;
     if (textarea) {
@@ -313,21 +331,31 @@ export function ContentEditor({ project, editorTab, onUpdate, onSaveError }: Con
       {editorTab === "xiaohongshu" && (
         <div className="space-y-3">
           <div className="rounded-lg border border-dashed border-outline-variant/40 bg-surface-container-low/80 p-3">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs text-on-surface-variant">
-                封面图（建议 3:4）
-                {(project.platforms.xiaohongshu.carousel_images?.length ?? 0) > 1
-                  ? ` · 共 ${project.platforms.xiaohongshu.carousel_images?.length} 张轮播`
+                轮播配图（建议 3:4，{xhsCarouselCount > 0 ? `共 ${xhsCarouselCount} 张` : "生成内容后自动规划"})
+                {(project.platforms.xiaohongshu.carousel_images?.length ?? 0) > 0
+                  ? ` · 已生成 ${project.platforms.xiaohongshu.carousel_images?.length} 张`
                   : ""}
               </span>
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="rounded-lg bg-primary px-3 py-1 text-xs text-on-primary disabled:opacity-50"
-              >
-                {uploading ? "上传中…" : "上传封面"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleGenerateCarousel()}
+                  disabled={generatingCarousel || uploading || !project.platforms.xiaohongshu.body}
+                  className="rounded-lg bg-stone-900 px-3 py-1 text-xs text-white disabled:opacity-50"
+                >
+                  {generatingCarousel ? "生成中…" : "一键生成全部轮播图"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading || generatingCarousel}
+                  className="rounded-lg bg-primary px-3 py-1 text-xs text-on-primary disabled:opacity-50"
+                >
+                  {uploading ? "上传中…" : "上传封面"}
+                </button>
+              </div>
             </div>
             <input
               ref={fileInputRef}

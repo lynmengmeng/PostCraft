@@ -57,7 +57,13 @@ from app.services.chat_orchestrator import ChatOrchestrator
 from app.services.fact_check import scan_project
 from app.services.image_generator import ImageGenerator
 from app.services.llm_client import LLMClient
+from app.services.pipeline import ContentPipeline
+from app.services.skill_loader import SkillLoader
 from app.services.repository import inspiration_repo, project_repo, style_repo, topic_repo
+from app.services.xiaohongshu_assets import (
+    generate_xiaohongshu_carousel,
+    sync_xiaohongshu_from_assets,
+)
 from app.utils.image_path import resolve_image_path
 
 public_router = APIRouter()
@@ -122,17 +128,6 @@ def _ensure_cover_asset_slot(
         )
     )
     return assets, len(assets) - 1
-
-
-def _sync_xiaohongshu_from_assets(project: ContentProject) -> None:
-    xhs_assets = [a for a in project.cover_assets if a.platform == "xiaohongshu"]
-    if not xhs_assets:
-        return
-    urls = [a.image_url for a in xhs_assets if a.image_url]
-    xhs = project.platforms["xiaohongshu"]
-    if urls:
-        xhs.carousel_images = urls
-        xhs.cover_image = urls[0]
 
 
 @public_router.get("/health")
@@ -557,7 +552,7 @@ async def upload_asset(
     project.cover_assets = assets
     if asset_index is not None and asset_index == 0:
         project.platforms["xiaohongshu"].cover_image = image_url
-    _sync_xiaohongshu_from_assets(project)
+    sync_xiaohongshu_from_assets(project)
     project.updated_at = datetime.utcnow()
     project = _scan_and_attach_warnings(project, db)
     return _save_project(db, project)
@@ -604,7 +599,35 @@ async def generate_asset_image(
     )
     project.platforms["wechat"] = WechatContent.model_validate(wechat_data)
     project.cover_assets = assets
-    _sync_xiaohongshu_from_assets(project)
+    sync_xiaohongshu_from_assets(project)
+    project.updated_at = datetime.utcnow()
+    project = _scan_and_attach_warnings(project, db)
+    return _save_project(db, project)
+
+
+@protected_router.post("/projects/{project_id}/xiaohongshu/carousel/generate", response_model=ContentProject)
+async def generate_xiaohongshu_carousel_images(
+    project_id: str,
+    force: bool = False,
+    db: Session = Depends(get_db),
+) -> ContentProject:
+    project = project_repo.get_project(db, project_id, **_scope())
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    settings = get_settings()
+    generator = ImageGenerator(settings)
+    pipeline = ContentPipeline(LLMClient(settings), SkillLoader(settings))
+    try:
+        project, _generated = await generate_xiaohongshu_carousel(
+            project,
+            generator,
+            pipeline,
+            force=force,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     project.updated_at = datetime.utcnow()
     project = _scan_and_attach_warnings(project, db)
     return _save_project(db, project)

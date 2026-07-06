@@ -650,6 +650,33 @@ export const api = {
     }
     return response.json() as Promise<ContentProject>;
   },
+
+  generateXiaohongshuCarousel: async (projectId: string, options?: { force?: boolean }) => {
+    const query = options?.force ? "?force=true" : "";
+    let response: Response;
+    try {
+      response = await fetch(
+        `${API_BASE}/projects/${projectId}/xiaohongshu/carousel/generate${query}`,
+        {
+          method: "POST",
+          headers: authHeaders(),
+        },
+      );
+    } catch (error) {
+      throw new ApiError(formatApiError(error, API_BASE), {
+        cause: error,
+        isNetworkError: isNetworkFetchError(error),
+      });
+    }
+    if (response.status === 401) {
+      handleUnauthorized();
+    }
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Carousel generate failed: ${response.status}`);
+    }
+    return response.json() as Promise<ContentProject>;
+  },
 };
 
 export const platformLabels: Record<Platform, string> = {

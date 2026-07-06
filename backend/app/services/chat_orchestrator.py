@@ -42,6 +42,7 @@ from app.services.pipeline import ContentPipeline
 from app.services.repository import apply_patch
 from app.services.skill_loader import SkillLoader
 from app.services.wechat_assets import next_asset_index
+from app.services.xiaohongshu_assets import generate_xiaohongshu_carousel
 from app.services.wechat_html import finalize_wechat_content
 from app.skill_pipelines import ALL_PLATFORMS
 
@@ -349,6 +350,7 @@ class ChatOrchestrator:
             "generate_platform": "生成平台内容",
             "refine_draft": "继续完善初稿",
             "layout_images": "调整公众号配图布局",
+            "generate_xhs_carousel": "一键生成全部轮播图",
         }
         return labels.get(parsed.intent, parsed.intent)
 
@@ -496,6 +498,42 @@ class ChatOrchestrator:
             patch_data = self._assign_placeholder_images(patch.patch)
             patch.patch = patch_data
             return patch
+
+        if parsed.intent == "generate_xhs_carousel":
+            xhs = project.platforms.get("xiaohongshu")
+            if not xhs or not (xhs.body or "").strip():
+                return ContentPatch(
+                    intent="generate_xhs_carousel",
+                    target_platforms=["xiaohongshu"],
+                    summary="请先生成小红书内容，再批量生成轮播图。",
+                    patch={},
+                )
+            if on_delta:
+                await on_delta("正在批量生成小红书轮播图…")
+            try:
+                updated, generated = await generate_xiaohongshu_carousel(
+                    project,
+                    self.images,
+                    self.pipeline,
+                )
+            except ValueError as exc:
+                return ContentPatch(
+                    intent="generate_xhs_carousel",
+                    target_platforms=["xiaohongshu"],
+                    summary=str(exc),
+                    patch={},
+                )
+            patch_data = {
+                "cover_assets": [a.model_dump(mode="json") for a in updated.cover_assets],
+                "platforms.xiaohongshu": updated.platforms["xiaohongshu"].model_dump(mode="json"),
+            }
+            return ContentPatch(
+                intent="generate_xhs_carousel",
+                target_platforms=["xiaohongshu"],
+                summary=f"已批量生成 {generated} 张小红书轮播图，可在预览区查看。",
+                patch=patch_data,
+                changes=self._changes_from_patch(patch_data),
+            )
 
         if parsed.intent == "layout_preset":
             wechat = project.platforms.get("wechat")

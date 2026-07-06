@@ -109,6 +109,7 @@ export default function CreateStudioPage() {
   const [cascadePrompt, setCascadePrompt] = useState(false);
   const [cascading, setCascading] = useState(false);
   const [exportingDraft, setExportingDraft] = useState(false);
+  const [generatingXhsCarousel, setGeneratingXhsCarousel] = useState(false);
   const [actionInfo, setActionInfo] = useState("");
   const [autoDraftPending, setAutoDraftPending] = useState(false);
 
@@ -272,6 +273,22 @@ export default function CreateStudioPage() {
       setSending(false);
       setRegeneratingId(null);
       chatAbortRef.current = null;
+    }
+  }
+
+  async function handleGenerateXhsCarousel() {
+    if (!project || generatingXhsCarousel) return;
+    setGeneratingXhsCarousel(true);
+    setError("");
+    try {
+      const saved = await api.generateXiaohongshuCarousel(project.id);
+      setProject(saved);
+      setActionInfo(`已批量生成 ${saved.platforms.xiaohongshu.carousel_images?.length ?? 0} 张轮播图`);
+      setTimeout(() => setActionInfo(""), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量生成失败");
+    } finally {
+      setGeneratingXhsCarousel(false);
     }
   }
 
@@ -747,10 +764,24 @@ export default function CreateStudioPage() {
           </div>
 
           <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low/50 p-4">
-            <h3 className="text-sm font-medium text-on-surface-variant">封面与配图</h3>
-            <p className="mt-2 text-xs leading-relaxed text-on-surface-variant/70">
-              生成平台内容后会先出现默认占位图。确认正文无误后，在每张占位上「上传图片」或「AI 生成」。
-            </p>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-medium text-on-surface-variant">封面与配图</h3>
+                <p className="mt-2 text-xs leading-relaxed text-on-surface-variant/70">
+                  生成平台内容后会先出现默认占位图。确认正文无误后，在每张占位上「上传图片」或「AI 生成」。
+                </p>
+              </div>
+              {project.platforms.xiaohongshu.body && (
+                <button
+                  type="button"
+                  disabled={generatingXhsCarousel || sending}
+                  onClick={() => void handleGenerateXhsCarousel()}
+                  className="shrink-0 rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  {generatingXhsCarousel ? "轮播生成中…" : "一键生成全部轮播图"}
+                </button>
+              )}
+            </div>
             {project.cover_assets.length === 0 ? (
               <p className="mt-3 text-sm leading-relaxed text-on-surface-variant">
                 生成任意平台内容后会自动创建封面与配图占位。也可在对话中发送「生成封面配图」。
@@ -762,6 +793,8 @@ export default function CreateStudioPage() {
                 );
                 const placementLabel = placement
                   ? getImagePlacementLabel(placement, asset)
+                  : asset.platform === "xiaohongshu"
+                    ? `小红书第${(asset.after_paragraph ?? index) + 1}张`
                   : asset.after_paragraph != null && asset.after_paragraph >= 0
                     ? getImagePlacementLabel(
                         {

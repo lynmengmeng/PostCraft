@@ -91,6 +91,10 @@ NEXT_PUBLIC_API_URL=http://localhost:8082/api
 
 未配置 API Key 时，后端自动使用本地 mock 模板，不影响 UI 与流程演示。
 
+## 测试环境部署
+
+推送到 `main` 后可自动部署到测试环境（需先在 GitHub 配置 `DEPLOY_HOST` / `DEPLOY_USER` / `DEPLOY_SSH_KEY`）。详见 [测试环境部署指南](docs/deploy-test.md)。
+
 ## 文档
 
 - [产品需求文档（PRD）](docs/PostCraft-PRD.md) — 第9 MVP 能力清单与同步

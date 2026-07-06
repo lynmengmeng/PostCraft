@@ -5,6 +5,7 @@ node_modules/
 frontend/.next/
 frontend/node_modules/
 .env
+deploy/deploy.local.env
 frontend/.env.local
 __pycache__/
 *.pyc

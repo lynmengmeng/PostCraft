@@ -1,0 +1,64 @@
+name: Deploy Test
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: 部署范围
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - all
+          - backend
+          - frontend
+      refresh_env:
+        description: 覆盖前端 .env.production
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && !contains(github.event.head_commit.message, '[skip deploy]'))
+    steps:
+      - name: Deploy to test EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            set -euo pipefail
+            ROOT="${{ secrets.DEPLOY_ROOT || '/opt/PostCraft' }}"
+            cd "$ROOT"
+
+            SCOPE="${{ github.event.inputs.scope || 'auto' }}"
+            REFRESH="${{ github.event.inputs.refresh_env || 'false' }}"
+
+            ARGS=(--skip-pull)
+            case "$SCOPE" in
+              auto) ARGS=(--auto --skip-pull) ;;
+              all) ARGS=(--all --skip-pull) ;;
+              backend) ARGS=(--backend --skip-pull) ;;
+              frontend) ARGS=(--frontend --skip-pull) ;;
+            esac
+
+            if [ "$REFRESH" = "true" ]; then
+              ARGS+=(--refresh-env)
+            fi
+
+            git fetch origin
+            git checkout "${{ github.ref_name }}"
+            git pull origin "${{ github.ref_name }}"
+
+            POSTCRAFT_ROOT="$ROOT" DEPLOY_BRANCH="${{ github.ref_name }}" bash deploy/remote-update.sh "${ARGS[@]}"

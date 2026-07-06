@@ -19,9 +19,73 @@ PostCraft API → api_keys.local.json（与 studyx 共享）→ OpenAI
 
 本地开发无法直连 OpenAI（Key 启用了 IP 白名单）时，可将 `frontend/.env.local` 的 `NEXT_PUBLIC_API_URL` 指向测试 API。
 
-## 日常更新流程
+## Push 后自动部署（推荐）
 
-已有测试环境时，按变更类型选择对应方式。
+配置一次 GitHub Secrets 后，推送到 `main` 会自动 SSH 到测试 EC2 并完成部署。
+
+### 1. 在 GitHub 仓库配置 Secrets
+
+路径：**Settings → Secrets and variables → Actions → New repository secret**
+
+| Secret | 必填 | 说明 |
+|--------|------|------|
+| `DEPLOY_HOST` | 是 | 测试 EC2 IP，当前为 `13.52.175.51` |
+| `DEPLOY_USER` | 是 | SSH 用户名，当前为 `root` |
+| `DEPLOY_SSH_KEY` | 是 | SSH 私钥全文（对应服务器 `~/.ssh/authorized_keys`） |
+| `DEPLOY_PORT` | 否 | SSH 端口，默认 `22` |
+| `DEPLOY_ROOT` | 否 | 代码目录，默认 `/opt/PostCraft` |
+
+服务器还需满足：
+
+- 已 clone 本仓库到 `/opt/PostCraft`，且能 `git pull`（Deploy Key 或 HTTPS token）
+- SSH 用户可无密码 `sudo`（`install-backend.sh` 需要写 systemd）
+- 已首次部署过后端与前端（见下文「首次部署」）
+
+### 1.1 仅密码登录时：配置部署密钥（一次性）
+
+本机已生成专用密钥 `C:\Users\86135\.ssh\postcraft-test`（无 passphrase）。在项目根目录终端执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy/install-ssh-key.ps1
+```
+
+按提示输入 `root@13.52.175.51` 密码；脚本会把公钥写入服务器并验证密钥登录，同时更新 `deploy/deploy.local.env`（已 gitignore）。
+
+GitHub Actions 还需把**私钥全文**（`postcraft-test` 文件内容）填入 Secret `DEPLOY_SSH_KEY`。
+
+### 2. 日常用法
+
+```bash
+git add .
+git commit -m "feat(studio): 你的变更"
+git push origin main
+```
+
+推送后 GitHub Actions 工作流 [`.github/workflows/deploy-test.yml`](../.github/workflows/deploy-test.yml) 会：
+
+1. SSH 登录测试 EC2
+2. `git pull`
+3. 运行 [`deploy/remote-update.sh`](../deploy/remote-update.sh)（自动判断更新前端 / 后端 / 两者）
+4. 运行 `deploy/verify-test.sh`
+
+在 GitHub **Actions** 页可查看部署日志。若某次提交不想触发部署，在 commit message 加 `[skip deploy]`。
+
+### 3. 手动触发
+
+GitHub → Actions → **Deploy Test** → **Run workflow**，可选择：
+
+- **scope**：`auto` / `all` / `backend` / `frontend`
+- **refresh_env**：是否覆盖 `frontend/.env.production`
+
+### 4. 让 Cursor 代你部署
+
+Secrets 配好后，你也可以 push 完直接对我说：**「已 push，帮我部署测试环境」**。我会查看 Actions 是否成功；若 Secrets 尚未配置或 Actions 失败，再改用 SSH 手动执行相同脚本。
+
+---
+
+## 日常更新流程（手动 SSH）
+
+已有测试环境、未启用 GitHub Actions 时，按变更类型选择对应方式。
 
 ### 场景 A：更新代码（最常见）
 
@@ -52,6 +116,13 @@ git pull
 | 前后端都有 | 先后端脚本 + restart，再前端脚本 |
 
 完整示例（前后端都更新）：
+
+```bash
+cd /opt/PostCraft
+POSTCRAFT_ROOT=/opt/PostCraft bash deploy/remote-update.sh --all
+```
+
+或分步执行：
 
 ```bash
 cd /opt/PostCraft
@@ -241,6 +312,8 @@ curl -s -o /dev/null -w "%{http_code}" https://postcrafttest.studyx.ai/api/proje
 - [`deploy/nginx-postcraft.conf.example`](../deploy/nginx-postcraft.conf.example)
 - [`.env.test.example`](../.env.test.example)
 - [`frontend/.env.test.example`](../frontend/.env.test.example)
+- [`deploy/remote-update.sh`](../deploy/remote-update.sh)
 - [`deploy/install-backend.sh`](../deploy/install-backend.sh)
 - [`deploy/install-frontend.sh`](../deploy/install-frontend.sh)
 - [`deploy/verify-test.sh`](../deploy/verify-test.sh)
+- [`.github/workflows/deploy-test.yml`](../.github/workflows/deploy-test.yml)

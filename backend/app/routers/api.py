@@ -8,11 +8,13 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from openai import APIStatusError, AuthenticationError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.database import get_db
 from app.deps.auth import get_scope_kwargs, require_auth
+from app.http_errors import llm_http_exception, repo_http_exception
 from app.models.schemas import (
     ApplyTitleRequest,
     AuthorStyleProfile,
@@ -56,6 +58,7 @@ from app.services.fact_check import scan_project
 from app.services.image_generator import ImageGenerator
 from app.services.llm_client import LLMClient
 from app.services.repository import inspiration_repo, project_repo, style_repo, topic_repo
+from app.utils.image_path import resolve_image_path
 
 public_router = APIRouter()
 protected_router = APIRouter(dependencies=[Depends(require_auth)])
@@ -64,6 +67,13 @@ router = APIRouter()
 
 def _scope() -> dict[str, str | bool | None]:
     return get_scope_kwargs()
+
+
+def _save_project(db: Session, project: ContentProject) -> ContentProject:
+    try:
+        return project_repo.save_project(db, project, **_scope())
+    except ValueError as exc:
+        raise repo_http_exception(exc) from exc
 
 
 def _scan_and_attach_warnings(project: ContentProject, db: Session) -> ContentProject:
@@ -114,6 +124,17 @@ def _ensure_cover_asset_slot(
     return assets, len(assets) - 1
 
 
+def _sync_xiaohongshu_from_assets(project: ContentProject) -> None:
+    xhs_assets = [a for a in project.cover_assets if a.platform == "xiaohongshu"]
+    if not xhs_assets:
+        return
+    urls = [a.image_url for a in xhs_assets if a.image_url]
+    xhs = project.platforms["xiaohongshu"]
+    if urls:
+        xhs.carousel_images = urls
+        xhs.cover_image = urls[0]
+
+
 @public_router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -138,7 +159,7 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> Con
         topic_meta=payload.topic_meta or TopicMeta(),
         content_pillar=payload.content_pillar,
     )
-    return project_repo.save_project(db, project, **_scope())
+    return _save_project(db, project)
 
 
 @protected_router.get("/projects/{project_id}", response_model=ContentProject)
@@ -187,7 +208,7 @@ def update_project(
     content_fields = {"platforms", "draft", "humanized", "cover_assets"}
     if content_fields.intersection(data.keys()):
         project = _scan_and_attach_warnings(project, db)
-    return project_repo.save_project(db, project, **_scope())
+    return _save_project(db, project)
 
 
 @protected_router.delete("/projects/{project_id}")
@@ -245,7 +266,7 @@ def import_project_draft(
     )
     if project.humanized.strip():
         project = _scan_and_attach_warnings(project, db)
-    return project_repo.save_project(db, project, **_scope())
+    return _save_project(db, project)
 
 
 @protected_router.post("/projects/{project_id}/apply-title", response_model=ContentProject)
@@ -273,7 +294,7 @@ def apply_title(
 
     project.updated_at = datetime.utcnow()
     project = _scan_and_attach_warnings(project, db)
-    return project_repo.save_project(db, project, **_scope())
+    return _save_project(db, project)
 
 
 @protected_router.post("/projects/{project_id}/versions/{version_id}/restore", response_model=ContentProject)
@@ -298,7 +319,7 @@ def restore_version(
         ChatMessage(role="assistant", content=f"已恢复到版本：{target.label}")
     )
     restored.updated_at = datetime.utcnow()
-    return project_repo.save_project(db, restored, **_scope())
+    return _save_project(db, restored)
 
 
 @protected_router.get("/projects/{project_id}/fact-check")
@@ -334,7 +355,7 @@ async def _chat_once(
         target_platforms=payload.target_platforms,
         attachment_urls=payload.attachment_urls or None,
     )
-    saved = project_repo.save_project(db, updated, **_scope())
+    saved = _save_project(db, updated)
     return {
         "project": saved.model_dump(mode="json"),
         "patch": patch.model_dump(mode="json"),
@@ -361,7 +382,7 @@ async def _cascade_once(
         style_profile,
         on_delta=on_delta if payload.stream else None,
     )
-    saved = project_repo.save_project(db, updated, **_scope())
+    saved = _save_project(db, updated)
     return {
         "project": saved.model_dump(mode="json"),
         "patch": patch.model_dump(mode="json"),
@@ -420,7 +441,7 @@ async def _regenerate_once(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    saved = project_repo.save_project(db, updated, **_scope())
+    saved = _save_project(db, updated)
     return {
         "project": saved.model_dump(mode="json"),
         "patch": patch.model_dump(mode="json"),
@@ -431,9 +452,7 @@ async def _regenerate_once(
 @public_router.get("/images/{filename}")
 def get_image(filename: str):
     settings = get_settings()
-    path = settings.images_dir / filename
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Image not found")
+    path = resolve_image_path(settings.images_dir, filename)
     media_types = {
         ".svg": "image/svg+xml",
         ".png": "image/png",
@@ -470,7 +489,7 @@ async def upload_cover(
         project.cover_assets[0].image_url = image_url
     project.updated_at = datetime.utcnow()
     project = _scan_and_attach_warnings(project, db)
-    return project_repo.save_project(db, project, **_scope())
+    return _save_project(db, project)
 
 
 @protected_router.post("/projects/{project_id}/upload-asset", response_model=ContentProject)
@@ -538,9 +557,10 @@ async def upload_asset(
     project.cover_assets = assets
     if asset_index is not None and asset_index == 0:
         project.platforms["xiaohongshu"].cover_image = image_url
+    _sync_xiaohongshu_from_assets(project)
     project.updated_at = datetime.utcnow()
     project = _scan_and_attach_warnings(project, db)
-    return project_repo.save_project(db, project, **_scope())
+    return _save_project(db, project)
 
 
 @protected_router.post("/projects/{project_id}/assets/{asset_index}/generate", response_model=ContentProject)
@@ -561,7 +581,8 @@ async def generate_asset_image(
     existing = assets[slot]
     after_paragraph = existing.after_paragraph
     is_cover = after_paragraph is None or after_paragraph < 0 or slot == 0
-    aspect = "wechat" if is_cover else "xhs"
+    is_xhs = existing.platform == "xiaohongshu"
+    aspect = "xhs" if is_xhs or not is_cover else "wechat"
     prompt = existing.prompt or "纪实风格，暖色生活场景，真实自然，不要明显 AI 感"
     generator = ImageGenerator(get_settings())
     image_url = await generator.generate(prompt, aspect=aspect)
@@ -573,7 +594,7 @@ async def generate_asset_image(
             "source": "generated",
         }
     )
-    if is_cover or asset_index == 0:
+    if is_cover or asset_index == 0 or is_xhs:
         project.platforms["xiaohongshu"].cover_image = image_url
 
     wechat = project.platforms["wechat"]
@@ -583,9 +604,10 @@ async def generate_asset_image(
     )
     project.platforms["wechat"] = WechatContent.model_validate(wechat_data)
     project.cover_assets = assets
+    _sync_xiaohongshu_from_assets(project)
     project.updated_at = datetime.utcnow()
     project = _scan_and_attach_warnings(project, db)
-    return project_repo.save_project(db, project, **_scope())
+    return _save_project(db, project)
 
 
 @protected_router.post("/projects/{project_id}/chat")
@@ -599,7 +621,10 @@ async def chat_with_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     if not payload.stream:
-        return await _chat_once(project, payload, db)
+        try:
+            return await _chat_once(project, payload, db)
+        except (AuthenticationError, APIStatusError) as exc:
+            raise llm_http_exception(exc) from exc
 
     async def event_stream() -> AsyncIterator[str]:
         deltas: list[str] = []
@@ -655,7 +680,10 @@ async def regenerate_chat_message(
         raise HTTPException(status_code=404, detail="Project not found")
 
     if not payload.stream:
-        return await _regenerate_once(project, payload, db)
+        try:
+            return await _regenerate_once(project, payload, db)
+        except (AuthenticationError, APIStatusError) as exc:
+            raise llm_http_exception(exc) from exc
 
     async def event_stream() -> AsyncIterator[str]:
         deltas: list[str] = []
@@ -715,7 +743,10 @@ async def cascade_project_platforms(
         raise HTTPException(status_code=404, detail="Project not found")
 
     if not payload.stream:
-        return await _cascade_once(project, payload, db)
+        try:
+            return await _cascade_once(project, payload, db)
+        except (AuthenticationError, APIStatusError) as exc:
+            raise llm_http_exception(exc) from exc
 
     async def event_stream() -> AsyncIterator[str]:
         deltas: list[str] = []
@@ -916,7 +947,7 @@ def inspiration_to_topic(inspiration_id: str, db: Session = Depends(get_db)) -> 
         inspiration=saved_topic.inspiration,
         topic_meta=TopicMeta(direction=saved_topic.direction, tone=saved_topic.tone),
     )
-    saved_project = project_repo.save_project(db, project, **_scope())
+    saved_project = _save_project(db, project)
     return {
         "topic": saved_topic.model_dump(mode="json"),
         "project": saved_project.model_dump(mode="json"),
@@ -1002,7 +1033,7 @@ def topic_to_project(topic_id: str, db: Session = Depends(get_db)) -> ContentPro
             series=topic.series,
         ),
     )
-    return project_repo.save_project(db, project, **_scope())
+    return _save_project(db, project)
 
 
 @protected_router.delete("/topics/{topic_id}")

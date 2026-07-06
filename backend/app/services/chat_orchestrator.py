@@ -41,8 +41,8 @@ from app.services.mock_generator import (
 from app.services.pipeline import ContentPipeline
 from app.services.repository import apply_patch
 from app.services.skill_loader import SkillLoader
-from app.services.wechat_html import finalize_wechat_content
 from app.services.wechat_assets import next_asset_index
+from app.services.wechat_html import finalize_wechat_content
 from app.skill_pipelines import ALL_PLATFORMS
 
 StreamCallback = Callable[[str], Awaitable[None]] | None
@@ -62,9 +62,49 @@ def _cover_style_hint(message: str) -> str:
         hints.append("暖色调")
     if re.search(r"纪实", message):
         hints.append("纪实摄影风格")
+    if re.search(r"极简|大字|排版", message):
+        hints.append("极简排版，大字标题")
+    if re.search(r"分屏|上下", message):
+        hints.append("上下分屏布局")
+    if re.search(r"手帐|治愈", message):
+        hints.append("手帐治愈风")
+    if re.search(r"拼贴|步骤|指南", message):
+        hints.append("多图拼贴或步骤指南风")
+    if re.search(r"提问|互动", message):
+        hints.append("提问互动式封面")
     if re.search(r"少.*AI|不要.*AI|真实", message):
         hints.append("真实自然，不要明显 AI 感")
     return "，".join(hints) if hints else "纪实风格，暖色生活场景，真实自然，不要明显 AI 感"
+
+
+def _sync_xiaohongshu_images(patch_data: dict[str, Any]) -> dict[str, Any]:
+    assets = patch_data.get("cover_assets") or []
+    xhs_assets = [a for a in assets if isinstance(a, dict) and a.get("platform") == "xiaohongshu"]
+    if not xhs_assets:
+        return patch_data
+
+    carousel = [a.get("image_url") for a in xhs_assets if a.get("image_url")]
+    cover_url = carousel[0] if carousel else ""
+
+    xhs_patch: dict[str, Any] = {}
+    if "platforms.xiaohongshu" in patch_data and isinstance(patch_data["platforms.xiaohongshu"], dict):
+        xhs_patch = dict(patch_data["platforms.xiaohongshu"])
+    elif isinstance(patch_data.get("platforms", {}).get("xiaohongshu"), dict):
+        xhs_patch = dict(patch_data["platforms"]["xiaohongshu"])
+
+    if carousel:
+        xhs_patch["carousel_images"] = carousel
+    if cover_url:
+        xhs_patch["cover_image"] = cover_url
+
+    if xhs_patch:
+        if "platforms.xiaohongshu" in patch_data:
+            patch_data["platforms.xiaohongshu"] = {**dict(patch_data.get("platforms.xiaohongshu") or {}), **xhs_patch}
+        else:
+            patch_data["platforms.xiaohongshu"] = xhs_patch
+            if cover_url and "platforms.xiaohongshu.cover_image" not in patch_data:
+                patch_data["platforms.xiaohongshu.cover_image"] = cover_url
+    return patch_data
 
 
 class ChatOrchestrator:
@@ -682,7 +722,8 @@ class ChatOrchestrator:
 
             after_paragraph = asset.get("after_paragraph", -1)
             is_cover = after_paragraph is None or after_paragraph < 0
-            aspect = "wechat" if is_cover else "xhs"
+            is_xhs = asset.get("platform") == "xiaohongshu"
+            aspect = "xhs" if is_xhs or not is_cover else "wechat"
             caption = asset.get("caption") or asset.get("subheadline") or "待配图"
             placeholder_url = self.images.slot_placeholder(aspect, caption=str(caption)[:24])
             updated = {
@@ -695,6 +736,7 @@ class ChatOrchestrator:
                 cover_url = placeholder_url
 
         patch_data["cover_assets"] = updated_assets
+        patch_data = _sync_xiaohongshu_images(patch_data)
         if cover_url:
             if "platforms.xiaohongshu" in patch_data and isinstance(patch_data["platforms.xiaohongshu"], dict):
                 patch_data["platforms.xiaohongshu"]["cover_image"] = cover_url
@@ -745,13 +787,15 @@ class ChatOrchestrator:
             prompt = asset.get("prompt", "纪实风格封面")
             after_paragraph = asset.get("after_paragraph", -1)
             is_cover = after_paragraph is None or after_paragraph < 0
-            aspect = "wechat" if is_cover else "xhs"
+            is_xhs = asset.get("platform") == "xiaohongshu"
+            aspect = "xhs" if is_xhs or not is_cover else "wechat"
             image_url = await self.images.generate(prompt, aspect=aspect)
             asset = {**asset, "image_url": image_url, "source": "generated"}
             updated_assets.append(asset)
 
         patch_data["cover_assets"] = updated_assets
-        if image_url:
+        patch_data = _sync_xiaohongshu_images(patch_data)
+        if image_url and not patch_data.get("platforms.xiaohongshu", {}).get("cover_image"):
             if "platforms.xiaohongshu" in patch_data and isinstance(patch_data["platforms.xiaohongshu"], dict):
                 patch_data["platforms.xiaohongshu"]["cover_image"] = image_url
             else:

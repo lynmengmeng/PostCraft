@@ -523,6 +523,10 @@ export const api = {
     inspiration?: string;
     content_pillar?: string;
     tone?: string;
+    source_url?: string;
+    trend_id?: string;
+    cover_headline?: string;
+    cover_subheadline?: string;
   }) =>
     request<Topic>("/tools/trends/to-topic", {
       method: "POST",
@@ -532,8 +536,23 @@ export const api = {
     title: string;
     inspiration?: string;
     content_pillar?: string;
+    source_url?: string;
+    trend_id?: string;
   }) =>
     request<Inspiration>("/tools/trends/to-inspiration", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  trendToProject: (payload: {
+    title: string;
+    inspiration?: string;
+    content_pillar?: string;
+    source_url?: string;
+    trend_id?: string;
+    cover_headline?: string;
+    cover_subheadline?: string;
+  }) =>
+    request<ContentProject>("/tools/trends/to-project", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

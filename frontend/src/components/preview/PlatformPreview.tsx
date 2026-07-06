@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { ContentProject, DouyinScene, Platform } from "@/lib/types";
 import { platformLabels } from "@/lib/api";
 import { resolveImageUrl } from "@/lib/export";
@@ -93,7 +94,11 @@ export function XiaohongshuPreview({
 }: {
   content: ContentProject["platforms"]["xiaohongshu"];
 }) {
-  const cover = resolveImageUrl(content.cover_image);
+  const carousel = (content.carousel_images || []).filter(Boolean);
+  const images = carousel.length > 0 ? carousel : content.cover_image ? [content.cover_image] : [];
+  const [activeIndex, setActiveIndex] = useState(0);
+  const cover = images[activeIndex] ? resolveImageUrl(images[activeIndex]) : "";
+
   return (
     <div className="xhs-preview mx-auto max-w-[360px] overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm">
       <div
@@ -115,7 +120,33 @@ export function XiaohongshuPreview({
             </div>
           </div>
         )}
+        {images.length > 1 && (
+          <>
+            <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 gap-1.5">
+              {images.map((_, index) => (
+                <button
+                  key={index}
+                  type="button"
+                  aria-label={`第 ${index + 1} 张`}
+                  onClick={() => setActiveIndex(index)}
+                  className={`h-1.5 rounded-full transition-all ${
+                    index === activeIndex ? "w-4 bg-white" : "w-1.5 bg-white/50"
+                  }`}
+                />
+              ))}
+            </div>
+            <div className="absolute right-3 top-3 rounded-full bg-black/45 px-2 py-0.5 text-[11px] text-white">
+              {activeIndex + 1}/{images.length}
+            </div>
+          </>
+        )}
       </div>
+      {content.image_pages && content.image_pages.length > 0 && (
+        <div className="border-b border-stone-100 px-4 py-2 text-xs text-stone-500">
+          图集方案：{content.image_pages.length} 张
+          {content.cover_style ? ` · ${content.cover_style.replace(/_/g, " ").slice(0, 24)}` : ""}
+        </div>
+      )}
       <div className="px-4 py-4">
         {cover && (
           <h2 className="mb-3 text-[17px] font-bold leading-snug text-stone-900">

@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 from functools import lru_cache
 from pathlib import Path
 import json
 import os
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -19,6 +21,7 @@ class Settings(BaseSettings):
 
     app_name: str = "PostCraft API"
     debug: bool = True
+    postcraft_env: str = "development"
     api_prefix: str = "/api"
     cors_origins: str = "http://localhost:3002,http://127.0.0.1:3002"
 
@@ -46,6 +49,27 @@ class Settings(BaseSettings):
     openai_skip_proxy: bool = True
     # 可选：指向 studyx-agent-backend/config/api_keys.local.json 等同路径
     api_keys_file: str = ""
+
+    @field_validator("postcraft_env", mode="before")
+    @classmethod
+    def normalize_env(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> Settings:
+        if self.postcraft_env != "production":
+            return self
+        if not self.auth_required:
+            raise ValueError("生产环境必须设置 AUTH_REQUIRED=true")
+        if self.jwt_secret.strip() in {"", "dev-change-me-in-production"}:
+            raise ValueError("生产环境必须设置强 JWT_SECRET")
+        if self.allow_register:
+            raise ValueError("生产环境建议设置 ALLOW_REGISTER=false")
+        if self.debug:
+            object.__setattr__(self, "debug", False)
+        return self
 
     @field_validator("api_keys_file", mode="before")
     @classmethod

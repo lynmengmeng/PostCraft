@@ -33,9 +33,20 @@ export interface WechatContent {
   title: string;
   summary: string;
   body: string;
+  cover_headline?: string;
+  cover_subheadline?: string;
   formatted_html?: string;
   style_theme?: Partial<WechatStyleTheme>;
   image_placements?: WechatImagePlacement[];
+}
+
+export interface XiaohongshuImagePage {
+  page: number;
+  role: "cover" | "content" | "summary";
+  headline: string;
+  subheadline?: string;
+  body_text?: string;
+  prompt?: string;
 }
 
 export interface XiaohongshuContent {
@@ -43,6 +54,9 @@ export interface XiaohongshuContent {
   body: string;
   tags: string[];
   cover_image?: string;
+  cover_style?: string;
+  carousel_images?: string[];
+  image_pages?: XiaohongshuImagePage[];
 }
 
 export interface DouyinContent {
@@ -244,6 +258,7 @@ export interface TrendsBoard {
   sources: string[];
   cache_hit: boolean;
   wechat_picks: WechatInspirationPick[];
+  saved_trend_ids: string[];
 }
 
 export interface TrendRelatedItem {

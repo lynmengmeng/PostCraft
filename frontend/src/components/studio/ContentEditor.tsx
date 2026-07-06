@@ -314,7 +314,12 @@ export function ContentEditor({ project, editorTab, onUpdate, onSaveError }: Con
         <div className="space-y-3">
           <div className="rounded-lg border border-dashed border-outline-variant/40 bg-surface-container-low/80 p-3">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs text-on-surface-variant">封面图（建议 3:4）</span>
+              <span className="text-xs text-on-surface-variant">
+                封面图（建议 3:4）
+                {(project.platforms.xiaohongshu.carousel_images?.length ?? 0) > 1
+                  ? ` · 共 ${project.platforms.xiaohongshu.carousel_images?.length} 张轮播`
+                  : ""}
+              </span>
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}

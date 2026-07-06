@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import hashlib
 import logging
 import re
@@ -157,14 +159,17 @@ class TrendsService:
             ("weibo_hot", self._fetch_weibo_hot),
             ("xiaohongshu_hot", self._fetch_xiaohongshu_hot),
         ]
-        for source_key, fetcher in fetchers:
-            try:
-                batch = fetcher()
-                if batch:
-                    items.extend(batch)
-                    sources.append(source_key)
-            except Exception as exc:
-                logger.warning("%s fetch failed: %s", source_key, exc)
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            future_map = {pool.submit(fetcher): source_key for source_key, fetcher in fetchers}
+            for future in as_completed(future_map):
+                source_key = future_map[future]
+                try:
+                    batch = future.result()
+                    if batch:
+                        items.extend(batch)
+                        sources.append(source_key)
+                except Exception as exc:
+                    logger.warning("%s fetch failed: %s", source_key, exc)
 
         if not items:
             items = self._fallback_items()

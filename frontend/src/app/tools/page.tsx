@@ -59,6 +59,12 @@ export default function ToolsPage() {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [savedPickIds, setSavedPickIds] = useState<Set<string>>(new Set());
 
+  const savedTrendIds = useMemo(() => {
+    const ids = new Set(data?.saved_trend_ids ?? []);
+    savedPickIds.forEach((id) => ids.add(id));
+    return ids;
+  }, [data?.saved_trend_ids, savedPickIds]);
+
   const filtered = useMemo(() => {
     let list = data?.items ?? [];
     if (sourceFilter !== "all") {
@@ -82,7 +88,6 @@ export default function ToolsPage() {
     try {
       const board = await api.refreshTrends();
       setData(board);
-      setSavedPickIds(new Set());
       setActionMsg("热点已刷新");
       setTimeout(() => setActionMsg(""), 2500);
     } catch (err) {
@@ -134,12 +139,15 @@ export default function ToolsPage() {
       ]
         .filter(Boolean)
         .join("\n");
-      const topic = await api.trendToTopic({
+      const project = await api.trendToProject({
         title: pick.article_title,
         inspiration,
         content_pillar: "热点观察",
+        source_url: pick.url,
+        trend_id: pick.trend_id,
+        cover_headline: pick.article_title.slice(0, 20),
+        cover_subheadline: pick.angle.slice(0, 40) || pick.title.slice(0, 40),
       });
-      const project = await api.topicToProject(topic.id);
       router.push(`/create/${project.id}`);
     } catch (err) {
       setActionMsgError(err instanceof Error ? err.message : "创建项目失败");
@@ -166,8 +174,18 @@ export default function ToolsPage() {
         title: pick.article_title,
         inspiration,
         content_pillar: "热点观察",
+        source_url: pick.url,
+        trend_id: pick.trend_id,
       });
       setSavedPickIds((prev) => new Set(prev).add(pick.trend_id));
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              saved_trend_ids: Array.from(new Set([...(prev.saved_trend_ids ?? []), pick.trend_id])),
+            }
+          : prev,
+      );
       setActionMsg("已存入灵感库");
       setTimeout(() => setActionMsg(""), 2500);
     } catch (err) {
@@ -185,7 +203,7 @@ export default function ToolsPage() {
     try {
       let saved = 0;
       for (const pick of picks) {
-        if (savedPickIds.has(pick.trend_id)) continue;
+        if (savedTrendIds.has(pick.trend_id)) continue;
         const inspiration = [
           `【公众号灵感推荐】${pick.article_title}`,
           `原热点：${pick.title}`,
@@ -199,10 +217,16 @@ export default function ToolsPage() {
           title: pick.article_title,
           inspiration,
           content_pillar: "热点观察",
+          source_url: pick.url,
+          trend_id: pick.trend_id,
         });
         saved += 1;
       }
-      setSavedPickIds(new Set(picks.map((pick) => pick.trend_id)));
+      const allIds = picks.map((pick) => pick.trend_id);
+      setSavedPickIds(new Set(allIds));
+      setData((prev) =>
+        prev ? { ...prev, saved_trend_ids: Array.from(new Set([...(prev.saved_trend_ids ?? []), ...allIds])) } : prev,
+      );
       setActionMsg(saved > 0 ? `已收藏 ${saved} 条到灵感库` : "已全部收藏过");
       setTimeout(() => setActionMsg(""), 2500);
     } catch (err) {
@@ -426,7 +450,7 @@ export default function ToolsPage() {
                       <Icon name="bookmark" className="text-sm" />
                       {busyAction === `inspiration:${pick.trend_id}`
                         ? "收藏中..."
-                        : savedPickIds.has(pick.trend_id)
+                        : savedTrendIds.has(pick.trend_id)
                           ? "已收藏"
                           : "收藏"}
                     </button>

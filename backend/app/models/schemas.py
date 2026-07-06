@@ -55,11 +55,23 @@ class WechatContent(BaseModel):
     cover_subheadline: str = ""
 
 
+class XiaohongshuImagePage(BaseModel):
+    page: int = 1
+    role: Literal["cover", "content", "summary"] = "content"
+    headline: str = ""
+    subheadline: str = ""
+    body_text: str = ""
+    prompt: str = ""
+
+
 class XiaohongshuContent(BaseModel):
     title: str = ""
     body: str = ""
     tags: list[str] = Field(default_factory=list)
     cover_image: str = ""
+    cover_style: str = ""
+    carousel_images: list[str] = Field(default_factory=list)
+    image_pages: list[XiaohongshuImagePage] = Field(default_factory=list)
 
 
 class DouyinContent(BaseModel):
@@ -416,6 +428,7 @@ class TrendsBoardResponse(BaseModel):
     sources: list[str] = Field(default_factory=list)
     cache_hit: bool = False
     wechat_picks: list[WechatInspirationPick] = Field(default_factory=list)
+    saved_trend_ids: list[str] = Field(default_factory=list)
 
 
 class TrendRelatedItem(BaseModel):
@@ -447,6 +460,10 @@ class TrendToTopicRequest(BaseModel):
     inspiration: str = ""
     content_pillar: str = "热点观察"
     tone: str = "温和共情"
+    source_url: str = ""
+    trend_id: str = ""
+    cover_headline: str = ""
+    cover_subheadline: str = ""
 
 
 class UserPublic(BaseModel):

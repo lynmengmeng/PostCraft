@@ -64,14 +64,42 @@ def _mock_platform_payload(project: ContentProject, humanized: str) -> dict:
             f"关于「{inspiration[:16]}」，我想分享一点真实观察 🌾\n\n"
             "回农村之前，我以为这些问题离我很远。\n"
             "回去之后才发现，它们就在日常里。\n\n"
-            "劣质商品、医疗意识、环境问题——\n"
-            "往往不是某一个原因，而是叠在一起。\n\n"
-            "· 劣质日用品还在流通\n"
-            "· 小问题容易被忽视\n"
-            "· 环境安全被默认接受\n\n"
+            "【要点一】劣质商品还在流通\n"
+            "· 三无产品在农村仍常见\n"
+            "· 包装像正规药，识别看细节\n\n"
+            "—————\n\n"
+            "【要点二】小问题容易被忽视\n"
+            "· 拖久了才去看\n"
+            "· 家人总觉得「没事」\n\n"
             "如果你也有类似感受，评论区聊聊 👇"
         ),
         tags=["生活观察", "农村生活", "健康提醒"],
+        cover_style="warm_documentary_photography_of_a_rural_sunset_over",
+        image_pages=[
+            {
+                "page": 1,
+                "role": "cover",
+                "headline": xhs_title[:14],
+                "subheadline": "真实观察分享",
+                "body_text": "",
+                "prompt": "暖色纪实摄影，农村傍晚，3:4竖版",
+            },
+            {
+                "page": 2,
+                "role": "content",
+                "headline": "劣质商品还在流通",
+                "body_text": "三无产品包装像正规药",
+                "prompt": "简洁文字排版，要点一页",
+            },
+            {
+                "page": 3,
+                "role": "summary",
+                "headline": "收藏备用",
+                "subheadline": "评论区聊聊",
+                "body_text": "三个被忽略的原因",
+                "prompt": "总结页，互动引导",
+            },
+        ],
     )
     douyin = DouyinContent(
         hook=hook,

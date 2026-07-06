@@ -8,6 +8,7 @@ from openai import APIStatusError, AsyncOpenAI, AuthenticationError
 
 from app.config import Settings
 from app.services.openai_transport import build_async_openai_image_client
+from app.utils.image_bytes import detect_image_content_type
 
 logger = logging.getLogger(__name__)
 
@@ -132,9 +133,12 @@ class ImageGenerator:
         return f"/api/images/{filename}"
 
     def save_upload(self, content: bytes, content_type: str) -> str:
-        allowed = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-        if content_type not in allowed:
+        detected = detect_image_content_type(content)
+        if not detected:
             raise ValueError("仅支持 JPEG、PNG、WebP、GIF 图片")
+        allowed = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+        if content_type in allowed and content_type != detected:
+            raise ValueError("图片内容与声明格式不一致")
         if len(content) > 5 * 1024 * 1024:
             raise ValueError("图片大小不能超过 5MB")
 
@@ -144,7 +148,7 @@ class ImageGenerator:
             "image/webp": ".webp",
             "image/gif": ".gif",
         }
-        filename = f"{uuid4().hex}{ext_map[content_type]}"
+        filename = f"{uuid4().hex}{ext_map[detected]}"
         path = self.output_dir / filename
         path.write_bytes(content)
         return f"/api/images/{filename}"

@@ -51,6 +51,8 @@ class WechatContent(BaseModel):
     formatted_html: str = ""
     style_theme: WechatStyleTheme = Field(default_factory=WechatStyleTheme)
     image_placements: list[WechatImagePlacement] = Field(default_factory=list)
+    cover_headline: str = ""
+    cover_subheadline: str = ""
 
 
 class XiaohongshuContent(BaseModel):
@@ -369,6 +371,82 @@ class LLMStatus(BaseModel):
     provider: str
     model: str
     configured: bool
+
+
+TrendSource = Literal[
+    "bilibili_hot",
+    "bilibili_popular",
+    "douyin_hot",
+    "douyin_popular",
+    "wechat_hot",
+    "wechat_search",
+    "weibo_hot",
+    "xiaohongshu_hot",
+    "fallback",
+]
+
+
+class TrendItem(BaseModel):
+    id: str
+    title: str
+    source: TrendSource = "bilibili_hot"
+    source_label: str = ""
+    rank: int = 0
+    heat: float = 0
+    heat_label: str = ""
+    url: str = ""
+    summary: str = ""
+
+
+class WechatInspirationPick(BaseModel):
+    trend_id: str
+    title: str
+    source: TrendSource = "wechat_hot"
+    source_label: str = ""
+    heat: float = 0
+    url: str = ""
+    article_title: str = ""
+    angle: str = ""
+    score: float = 0
+
+
+class TrendsBoardResponse(BaseModel):
+    items: list[TrendItem] = Field(default_factory=list)
+    fetched_at: datetime | None = None
+    sources: list[str] = Field(default_factory=list)
+    cache_hit: bool = False
+    wechat_picks: list[WechatInspirationPick] = Field(default_factory=list)
+
+
+class TrendRelatedItem(BaseModel):
+    title: str
+    url: str = ""
+    source: str = ""
+    summary: str = ""
+    metrics: str = ""
+
+
+class TrendAnalysisRequest(BaseModel):
+    title: str
+    source: str = ""
+    summary: str = ""
+    platform: str = ""
+
+
+class TrendAnalysis(BaseModel):
+    why_hot: str = ""
+    account_angle: str = ""
+    topic_ideas: list[str] = Field(default_factory=list)
+    platform_tips: dict[str, str] = Field(default_factory=dict)
+    caution: str = ""
+    related: list[TrendRelatedItem] = Field(default_factory=list)
+
+
+class TrendToTopicRequest(BaseModel):
+    title: str
+    inspiration: str = ""
+    content_pillar: str = "热点观察"
+    tone: str = "温和共情"
 
 
 class UserPublic(BaseModel):

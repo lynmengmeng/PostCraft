@@ -11,6 +11,7 @@ const navItems = [
   { href: "/workspace", label: "工作台", icon: "dashboard" },
   { href: "/inspirations", label: "灵感库", icon: "lightbulb" },
   { href: "/topics", label: "选题库", icon: "topic" },
+  { href: "/tools", label: "热点工具", icon: "trending_up" },
   { href: "/drafts", label: "草稿箱", icon: "description" },
   { href: "/settings", label: "设置", icon: "settings" },
 ];
@@ -19,6 +20,7 @@ const searchPlaceholders: Record<string, string> = {
   "/workspace": "搜索工作台...",
   "/inspirations": "搜索灵感库...",
   "/topics": "搜索选题、支柱或基调...",
+  "/tools": "搜索热点话题...",
   "/drafts": "搜索草稿...",
   "/settings": "搜索设置...",
 };

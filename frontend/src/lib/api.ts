@@ -10,6 +10,10 @@ import type {
   RiskWarning,
   Topic,
   TopicStats,
+  TrendAnalysis,
+  TrendItem,
+  TrendRelatedItem,
+  TrendsBoard,
 } from "./types";
 import { ApiError, formatApiError, isNetworkFetchError } from "./api-error";
 import { authHeaders, clearAuth } from "./auth";
@@ -493,6 +497,46 @@ export const api = {
     request<ContentProject>(`/topics/${id}/to-project`, { method: "POST" }),
   deleteTopic: (id: string) =>
     request<{ ok: boolean }>(`/topics/${id}`, { method: "DELETE" }),
+
+  getTrends: (refresh = false) =>
+    request<TrendsBoard>(`/tools/trends${refresh ? "?refresh=true" : ""}`),
+  refreshTrends: () =>
+    request<TrendsBoard>("/tools/trends/refresh", { method: "POST" }),
+  getTrendRelated: (keyword: string, platform?: string) =>
+    request<TrendRelatedItem[]>(
+      `/tools/trends/related?keyword=${encodeURIComponent(keyword)}${
+        platform ? `&platform=${encodeURIComponent(platform)}` : ""
+      }`,
+    ),
+  analyzeTrend: (payload: {
+    title: string;
+    source?: string;
+    summary?: string;
+    platform?: string;
+  }) =>
+    request<TrendAnalysis>("/tools/trends/analyze", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  trendToTopic: (payload: {
+    title: string;
+    inspiration?: string;
+    content_pillar?: string;
+    tone?: string;
+  }) =>
+    request<Topic>("/tools/trends/to-topic", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  trendToInspiration: (payload: {
+    title: string;
+    inspiration?: string;
+    content_pillar?: string;
+  }) =>
+    request<Inspiration>("/tools/trends/to-inspiration", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 
   getStyleProfile: () => request<AuthorStyleProfile>("/settings/style"),
   updateStyleProfile: (profile: AuthorStyleProfile) =>

@@ -46,7 +46,7 @@ class ContentPipeline:
             "general-writing",
             project,
             style_profile,
-            message or "基于灵感撰写观察型文章初稿",
+            message or "基于灵感撰写只解决一个具体问题的观察型文章初稿，开头直接从痛点切入，不要背景综述",
             input_text=project.inspiration or project.title,
         )
 
@@ -393,8 +393,16 @@ class ContentPipeline:
         input_text: str,
     ) -> str:
         skill = self.skills.load(skill_name)
+        extra = ""
+        if skill_name == "general-writing":
+            extra = (
+                "\n\n【单问题写作 — 必须遵守】\n"
+                "- 全文只回答灵感中的 1 个核心问题\n"
+                "- 开头直接从痛点切入，禁止「随着……越来越……」类背景铺垫\n"
+                "- 结构：核心问题 + 3-5 个小节 + 「你可以先做这一步」\n"
+            )
         system = (
-            f"{skill}\n\n"
+            f"{skill}{extra}\n\n"
             f"{self._style_block(style_profile, ALL_PLATFORMS)}\n\n"
             "只输出 Markdown 正文，不要 JSON，不要解释。\n"
             "排版要求：用 ## 分节；段落间空一行；并列内容用有序/无序列表；避免整篇长段落。"
@@ -424,7 +432,8 @@ class ContentPipeline:
             schema_hint = '{"title":"","body":"","tags":[]}'
         else:
             schema_hint = (
-                '{"title":"","summary":"","body":"","style_theme":{"layout_preset":"classic|lively|story|checklist",'
+                '{"title":"","summary":"","cover_headline":"","cover_subheadline":"","body":"",'
+                '"style_theme":{"layout_preset":"classic|lively|story|checklist",'
                 '"accent":"","mood":"",'
                 '"heading_style":"border_left|underline|plain","quote_bg":"","quote_border":"",'
                 '"text_color":"","heading_color":""},'
@@ -453,8 +462,10 @@ class ContentPipeline:
         count: int = 12,
     ) -> list[dict[str, Any]]:
         system = (
-            "你是中文标题策划。输出 JSON："
-            '{"titles":[{"text":"","style":"情绪共鸣型|问题型|警醒型|深度型|故事型"}]}'
+            "你是中文标题策划，专注公众号冷启动搜索型标题。输出 JSON："
+            '{"titles":[{"text":"","style":"搜索问题型|人群痛点型|误区纠正型|对比选择型|结果承诺型"}]}\n'
+            "要求：标题含具体场景/人群/动作词，像用户会搜索的问题；"
+            "避免空泛词「提高」「全面」「指南」「必看」；不用震惊体。"
         )
         user = (
             self._style_block(style_profile, ALL_PLATFORMS)
@@ -465,7 +476,7 @@ class ContentPipeline:
         payload = parse_json_from_text(raw)
         titles = payload.get("titles", [])
         return [
-            TitleCandidate(text=t.get("text", ""), style=t.get("style", "深度型")).model_dump(mode="json")
+            TitleCandidate(text=t.get("text", ""), style=t.get("style", "搜索问题型")).model_dump(mode="json")
             for t in titles
             if t.get("text")
         ]
@@ -500,11 +511,12 @@ class ContentPipeline:
                 )
                 assets.append(asset.model_dump(mode="json"))
         else:
+            headline, subheadline = self._cover_copy_from_wechat(wechat, str(wechat_title))
             asset = CoverAsset(
                 platform="all",
-                headline=str(wechat_title)[:20],
-                subheadline="真实观察 · 温和提醒",
-                prompt="纪实风格，暖色乡村傍晚，真实生活场景，横版构图 2.35:1，主体居中便于方形裁切，不要明显 AI 感",
+                headline=headline,
+                subheadline=subheadline,
+                prompt="简洁纪实风格，暖色生活场景，横版构图 2.35:1，主体居中便于方形裁切，少装饰，不要明显 AI 感",
                 after_paragraph=-1,
                 asset_index=0,
                 source="placeholder",
@@ -533,9 +545,39 @@ class ContentPipeline:
 
         payload["style_theme"] = style_theme
         payload["image_placements"] = placements
+        payload["cover_headline"] = str(payload.get("cover_headline") or "")[:14]
+        payload["cover_subheadline"] = str(payload.get("cover_subheadline") or "")[:18]
         payload.pop("formatted_html", None)
         payload["formatted_html"] = build_formatted_html(payload, [], force_rerender=True)
         return payload
+
+    def _coldstart_rules_block(self) -> str:
+        coldstart = self.skills.load("wechat-coldstart")
+        return f"\n\n【公众号冷启动规则 — 必须遵守】\n{coldstart}\n"
+
+    def _cover_copy_from_wechat(self, wechat: dict[str, Any], fallback_title: str) -> tuple[str, str]:
+        headline = str(wechat.get("cover_headline") or "").strip()
+        subheadline = str(wechat.get("cover_subheadline") or "").strip()
+        if headline and subheadline:
+            return headline[:14], subheadline[:18]
+
+        title = str(wechat.get("title") or fallback_title or "").strip()
+        if not title:
+            return "这篇和你有关", "一篇讲清怎么做"
+
+        normalized = title.replace("?", "？")
+        if "？" in normalized:
+            question, _, rest = normalized.partition("？")
+            headline = f"{question.strip()}？"
+            subheadline = rest.strip() or "一篇讲清怎么做"
+            return headline[:14], subheadline[:18]
+
+        for sep in ("：", ":"):
+            if sep in title:
+                parts = title.split(sep, 1)
+                return parts[0].strip()[:14], (parts[1].strip() or "一篇讲清怎么做")[:18]
+
+        return title[:14], "一篇讲清怎么做"
 
     def _inject_image_placeholders(self, body: str, placements: list[dict[str, Any]]) -> str:
         paragraphs = [p for p in body.split("\n\n") if p.strip()]
@@ -562,19 +604,23 @@ class ContentPipeline:
     def _formatting_rules(self, skill_name: str) -> str:
         if skill_name == "wechat-converter":
             return (
-                "body 排版要求（Markdown）：\n"
+                self._coldstart_rules_block()
+                + "body 排版要求（Markdown）：\n"
                 "- 用 ## 作为小节标题，标题与正文之间空一行\n"
                 "- 段落之间必须空一行，每段 2-4 句为宜\n"
                 "- 并列要点用「1. 2. 3.」有序列表，每项单独一行\n"
                 "- 引用/金句用 > 开头，引用块前后各空一行\n"
                 "- h2/h3 层级清晰，避免跳级\n"
                 "- 避免整篇一大段文字，保持公众号阅读节奏\n"
+                "- 开头前 3 段：痛点场景 → 反常识 → 本文承诺；禁止背景综述式引言\n"
+                "- 全文只解决 1 个核心问题；结尾给 1 个可执行行动\n"
                 "- 在正文中用 ![图注](__IMAGE_N__) 标记配图位置（N 从 0 起）\n"
                 "- 根据文章调性输出 style_theme（accent/quote_bg 等 HEX 色值）\n"
-                "- style_theme.layout_preset 按调性选择：生活观察/周末随笔/情感叙事 → lively 或 story；"
-                "步骤清单/干货罗列 → checklist；严肃深度长文 → classic；未明确时 → classic\n"
+                "- style_theme.layout_preset：步骤清单/干货罗列 → checklist；"
+                "生活观察/情感叙事 → lively 或 story；严肃深度长文 → classic\n"
                 "- checklist 预设下可用 > 💡 提示、> ⚠️ 警示 引导读者\n"
-                "- 输出 image_placements：2-3 处正文配图，含 after_paragraph、caption、prompt"
+                "- 输出 image_placements：2-3 处正文配图，含 after_paragraph、caption、prompt\n"
+                "- 必须输出 cover_headline（痛点问句 ≤14 字）和 cover_subheadline（结果/方法 ≤18 字）"
             )
         if skill_name == "xiaohongshu-converter":
             return (
@@ -619,5 +665,9 @@ class ContentPipeline:
             for platform, hint in defaults.items():
                 if hint:
                     lines.append(f"- {platform} 平台风格: {hint}")
+        if platforms and "wechat" in platforms:
+            lines.append(
+                "- 公众号额外遵循: 搜索型标题、痛点开头、单问题结构、实用可转发"
+            )
         lines.append("- 表达原则: 现象观察、有分寸、去 AI 味、去营销号套路")
         return "\n".join(lines)

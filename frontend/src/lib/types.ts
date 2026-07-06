@@ -203,6 +203,66 @@ export interface AuthorStyleProfile {
   platform_defaults: Record<string, string>;
 }
 
+export type TrendSource =
+  | "bilibili_hot"
+  | "bilibili_popular"
+  | "douyin_hot"
+  | "douyin_popular"
+  | "wechat_hot"
+  | "wechat_search"
+  | "weibo_hot"
+  | "xiaohongshu_hot"
+  | "fallback";
+
+export interface TrendItem {
+  id: string;
+  title: string;
+  source: TrendSource;
+  source_label: string;
+  rank: number;
+  heat: number;
+  heat_label: string;
+  url: string;
+  summary: string;
+}
+
+export interface WechatInspirationPick {
+  trend_id: string;
+  title: string;
+  source: TrendSource;
+  source_label: string;
+  heat: number;
+  url: string;
+  article_title: string;
+  angle: string;
+  score: number;
+}
+
+export interface TrendsBoard {
+  items: TrendItem[];
+  fetched_at: string | null;
+  sources: string[];
+  cache_hit: boolean;
+  wechat_picks: WechatInspirationPick[];
+}
+
+export interface TrendRelatedItem {
+  title: string;
+  url: string;
+  source: string;
+  summary: string;
+  metrics: string;
+}
+
+export interface TrendAnalysis {
+  why_hot: string;
+  account_angle: string;
+  topic_ideas: string[];
+  platform_tips: Record<string, string>;
+  caution: string;
+  related: TrendRelatedItem[];
+}
+
 export interface LLMStatus {
   provider: string;
   model: string;

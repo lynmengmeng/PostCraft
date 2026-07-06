@@ -5,6 +5,7 @@ from app.config import get_settings
 from app.db.database import init_db
 from app.routers.api import router
 from app.routers.auth import router as auth_router
+from app.routers.tools import router as tools_router
 
 settings = get_settings()
 
@@ -18,6 +19,7 @@ app.add_middleware(
 )
 app.include_router(auth_router, prefix=settings.api_prefix)
 app.include_router(router, prefix=settings.api_prefix)
+app.include_router(tools_router, prefix=settings.api_prefix)
 
 
 @app.on_event("startup")

@@ -739,8 +739,17 @@ async def generate_asset_image(
     is_xhs = existing.platform == "xiaohongshu"
     aspect = "xhs" if is_xhs or not is_cover else "wechat"
     if is_xhs:
-        from app.services.xiaohongshu_assets import resolve_xhs_generation_prompt
+        from app.services.xiaohongshu_assets import resolve_xhs_generation_prompt, sync_xhs_carousel_plan
 
+        settings = get_settings()
+        pipeline = ContentPipeline(LLMClient(settings), SkillLoader(settings))
+        project = sync_xhs_carousel_plan(project, pipeline)
+        assets = list(project.cover_assets)
+        xhs_assets = sorted(
+            [a for a in assets if a.platform == "xiaohongshu"],
+            key=lambda a: a.after_paragraph if a.after_paragraph is not None else 0,
+        )
+        existing = next((a for a in xhs_assets if a.asset_index == asset_index), existing)
         prompt = resolve_xhs_generation_prompt(project, existing)
     else:
         prompt = existing.prompt or "纪实风格，暖色生活场景，真实自然，不要明显 AI 感"
@@ -748,22 +757,35 @@ async def generate_asset_image(
     image_url = await generator.generate(prompt, aspect=aspect)
     asset_source = "placeholder" if generator.last_was_placeholder else "generated"
 
-    assets[slot] = CoverAsset(
-        **{
-            **existing.model_dump(),
-            "image_url": image_url,
-            "prompt": prompt,
-            "source": asset_source,
-        }
-    )
+    if is_xhs:
+        for index, asset in enumerate(project.cover_assets):
+            if asset.asset_index == existing.asset_index and asset.platform == "xiaohongshu":
+                project.cover_assets[index] = CoverAsset(
+                    **{
+                        **asset.model_dump(),
+                        "image_url": image_url,
+                        "prompt": prompt,
+                        "source": asset_source,
+                    }
+                )
+                break
+    else:
+        assets[slot] = CoverAsset(
+            **{
+                **existing.model_dump(),
+                "image_url": image_url,
+                "prompt": prompt,
+                "source": asset_source,
+            }
+        )
+        project.cover_assets = assets
 
     wechat = project.platforms["wechat"]
     wechat_data = finalize_wechat_content(
         wechat.model_dump(mode="json"),
-        [a.model_dump(mode="json") for a in assets],
+        [a.model_dump(mode="json") for a in project.cover_assets],
     )
     project.platforms["wechat"] = WechatContent.model_validate(wechat_data)
-    project.cover_assets = assets
     sync_xiaohongshu_from_assets(project)
     project.updated_at = datetime.utcnow()
     project = _scan_and_attach_warnings(project, db)
@@ -785,9 +807,9 @@ async def generate_xiaohongshu_carousel_images(
     pipeline = ContentPipeline(LLMClient(settings), SkillLoader(settings))
     try:
         if plan_only:
-            from app.services.xiaohongshu_assets import ensure_xiaohongshu_carousel_assets
+            from app.services.xiaohongshu_assets import sync_xhs_carousel_plan
 
-            project.cover_assets = ensure_xiaohongshu_carousel_assets(project, pipeline)
+            project = sync_xhs_carousel_plan(project, pipeline)
         else:
             generator = ImageGenerator(settings)
             project, _generated = await generate_xiaohongshu_carousel(

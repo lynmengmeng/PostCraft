@@ -43,7 +43,7 @@ from app.services.pipeline import ContentPipeline
 from app.services.repository import apply_patch
 from app.services.skill_loader import SkillLoader
 from app.services.wechat_assets import next_asset_index
-from app.services.xiaohongshu_assets import generate_xiaohongshu_carousel
+from app.services.xiaohongshu_assets import generate_xiaohongshu_carousel, sync_xhs_carousel_plan
 from app.services.wechat_html import finalize_wechat_content
 from app.skill_pipelines import ALL_PLATFORMS
 
@@ -360,6 +360,7 @@ class ChatOrchestrator:
             "layout_images": "调整公众号配图布局",
             "generate_xhs_carousel": "一键生成全部轮播图",
             "xhs_page_count": "调整小红书配图张数",
+            "xhs_regen_copy": "重新提炼小红书配图文案",
         }
         return labels.get(parsed.intent, parsed.intent)
 
@@ -649,21 +650,58 @@ class ChatOrchestrator:
             count = parsed.xhs_page_count or 1
             if on_delta:
                 await on_delta(f"正在将小红书配图调整为 {count} 张…")
-            xhs_data = xhs.model_dump(mode="json")
+            working = project.model_copy(deep=True)
+            xhs_data = working.platforms["xiaohongshu"].model_dump(mode="json")
             xhs_data = self.pipeline.reshape_xiaohongshu_image_pages(xhs_data, count)
             xhs_data = await self.pipeline.refine_xhs_payload_image_copy(xhs_data)
-            patch_data = {"platforms.xiaohongshu": xhs_data}
-            patch_data = await self._ensure_cover_assets(
-                project,
-                patch_data,
-                style_profile,
-                content_categories=content_categories,
-            )
+            from app.models.schemas import XiaohongshuContent
+
+            working.platforms["xiaohongshu"] = XiaohongshuContent.model_validate(xhs_data)
+            working.cover_assets = [
+                a for a in working.cover_assets if a.platform != "xiaohongshu"
+            ]
+            synced = sync_xhs_carousel_plan(working, self.pipeline)
+            patch_data = {
+                "platforms.xiaohongshu": synced.platforms["xiaohongshu"].model_dump(mode="json"),
+                "cover_assets": [a.model_dump(mode="json") for a in synced.cover_assets],
+            }
             label = "单图笔记" if count == 1 else f"{count} 张轮播"
             return ContentPatch(
                 intent="xhs_page_count",
                 target_platforms=["xiaohongshu"],
                 summary=f"已将小红书配图方案调整为 {label}，可在右侧轮播区查看。",
+                patch=patch_data,
+                changes=self._changes_from_patch(patch_data),
+            )
+
+        if parsed.intent == "xhs_regen_copy":
+            xhs = project.platforms.get("xiaohongshu")
+            if not xhs or not (xhs.body or "").strip():
+                return ContentPatch(
+                    intent="xhs_regen_copy",
+                    target_platforms=["xiaohongshu"],
+                    summary="请先生成小红书内容，再重新提炼配图文案。",
+                    patch={},
+                )
+            if on_delta:
+                await on_delta("正在重新提炼小红书配图文案…")
+            working = project.model_copy(deep=True)
+            synced = sync_xhs_carousel_plan(working, self.pipeline)
+            if self.llm.status().configured and len(synced.platforms["xiaohongshu"].image_pages or []) == 1:
+                xhs_data = synced.platforms["xiaohongshu"].model_dump(mode="json")
+                xhs_data = await self.pipeline.refine_xhs_payload_image_copy(xhs_data)
+                from app.models.schemas import XiaohongshuContent
+
+                synced.platforms["xiaohongshu"] = XiaohongshuContent.model_validate(xhs_data)
+                synced = sync_xhs_carousel_plan(synced, self.pipeline)
+            patch_data = {
+                "platforms.xiaohongshu": synced.platforms["xiaohongshu"].model_dump(mode="json"),
+                "cover_assets": [a.model_dump(mode="json") for a in synced.cover_assets],
+            }
+            return ContentPatch(
+                intent="xhs_regen_copy",
+                target_platforms=["xiaohongshu"],
+                summary="已重新提炼小红书配图文案，请点击「重新生成」更新图片。",
                 patch=patch_data,
                 changes=self._changes_from_patch(patch_data),
             )

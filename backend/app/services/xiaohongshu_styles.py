@@ -144,10 +144,17 @@ def summarize_xhs_single_page_body(title: str, body: str, *, max_len: int = XHS_
 
 
 def summarize_xhs_single_page_copy(title: str, body: str) -> dict[str, str]:
+    headline = compress_xhs_image_headline(title)
+    bullets = summarize_xhs_single_page_body(title, body)
+    hook = summarize_xhs_image_subheadline(body)
+    if bullets and " · " in bullets:
+        subheadline = truncate_xhs_copy(bullets, XHS_IMAGE_SUBHEADLINE_MAX)
+    else:
+        subheadline = hook
     return {
-        "headline": compress_xhs_image_headline(title),
-        "subheadline": summarize_xhs_image_subheadline(body),
-        "body_text": summarize_xhs_single_page_body(title, body),
+        "headline": headline,
+        "subheadline": subheadline,
+        "body_text": "",
     }
 
 
@@ -303,6 +310,7 @@ class XiaohongshuCoverStyle:
         )
         if text_part:
             base += f" 画面含{text_part}。"
+            base += " 文字须完整显示、禁止截断缺字，不要添加未指定的其他文字。"
         if extra:
             base += f" {extra}"
         return base[:900]
@@ -423,11 +431,16 @@ def build_xhs_page_prompt(
     total_pages: int = 1,
 ) -> str:
     if role == "cover" or page_index == 1:
+        single_page = total_pages == 1
         core = style.image_prompt(
             headline=headline[:XHS_IMAGE_HEADLINE_MAX],
             subheadline=subheadline[:XHS_IMAGE_SUBHEADLINE_MAX],
-            body_text=body_text[:XHS_IMAGE_SINGLE_BODY_MAX] if total_pages == 1 else "",
-            extra="单图笔记，信息集中在一页" if total_pages == 1 else "",
+            body_text="" if single_page else body_text[:XHS_IMAGE_SINGLE_BODY_MAX],
+            extra=(
+                "单图笔记。画面仅显示标题与副标题两行中文，禁止出现第三段文字或正文段落。"
+                if single_page
+                else ""
+            ),
         )
     else:
         core = content_page_prompt(

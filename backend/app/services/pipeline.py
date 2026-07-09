@@ -1179,6 +1179,12 @@ class ContentPipeline:
                 style,
             )
 
+        pages = refine_xhs_image_pages(
+            pages,
+            title=str(xhs.get("title") or ""),
+            body=str(xhs.get("body") or ""),
+        )
+
         total_pages = min(len(pages), XHS_MAX_PAGES)
         assets: list[dict[str, Any]] = []
         base_index = 100

@@ -5,6 +5,7 @@ from app.services.pipeline import ContentPipeline
 from app.services.xiaohongshu_assets import (
     ensure_xiaohongshu_carousel_assets,
     generate_xiaohongshu_carousel,
+    sync_xhs_carousel_plan,
     sync_xiaohongshu_from_assets,
 )
 
@@ -102,6 +103,41 @@ def test_ensure_xiaohongshu_carousel_single_image_body():
     assets = ensure_xiaohongshu_carousel_assets(project, pipeline)
     xhs_assets = [a for a in assets if a.platform == "xiaohongshu"]
     assert len(xhs_assets) == 1
+
+
+def test_sync_xhs_carousel_plan_refines_single_image_copy():
+    pipeline = ContentPipeline(_FakeLLM(), _FakeSkills())  # type: ignore[arg-type]
+    title = "夏夜太短，5个让夜晚变长的幸福提案"
+    body = "白天属于责任，夜晚才真正属于自己。与其刷短视频消耗时间，不如试试这些让夏夜变得舒展的方法。"
+    project = ContentProject(
+        inspiration="测试",
+        platforms={
+            "xiaohongshu": XiaohongshuContent(
+                title=title,
+                body=body,
+                image_pages=[],
+            )
+        },
+        cover_assets=[
+            CoverAsset(
+                platform="xiaohongshu",
+                headline=title,
+                subheadline=body,
+                prompt="old prompt",
+                asset_index=100,
+                source="placeholder",
+            )
+        ],
+    )
+    synced = sync_xhs_carousel_plan(project, pipeline)
+    xhs_assets = [a for a in synced.cover_assets if a.platform == "xiaohongshu"]
+    assert len(xhs_assets) == 1
+    assert len(xhs_assets[0].headline) <= 14
+    assert xhs_assets[0].headline.endswith("提案")
+    assert len(xhs_assets[0].subheadline) <= 20
+    assert title not in xhs_assets[0].prompt
+    assert "变长的幸" not in xhs_assets[0].prompt
+    assert synced.platforms["xiaohongshu"].image_pages[0].body_text == ""
 
 
 def test_sync_xiaohongshu_from_assets():

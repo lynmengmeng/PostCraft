@@ -48,6 +48,7 @@ QUICK_INTENTS = [
     (re.compile(r"撤销|回退|上一版"), "rollback", []),
     (re.compile(r"调整配图|配图位置|移动.*图|图.*移到|重新排版.*图|插入配图|图片位置"), "layout_images", []),
     (re.compile(r"一键.*轮播|批量.*轮播|全部.*轮播|生成.*轮播图|轮播图.*生成|轮播.*配图"), "generate_xhs_carousel", []),
+    (re.compile(r"重新.*(?:图片|配图).*文案|(?:图片|配图)文案.*(?:异常|不对|重新|生成)|重新生成.*配图文案"), "xhs_regen_copy", []),
     (re.compile(r"封面.*暖色|暖色.*封面|纪实.*封面|封面.*纪实|少.*AI|重新.*封面|封面.*风格"), "regenerate_cover", []),
     (re.compile(r"封面|配图"), "cover_assets", []),
     (re.compile(r"同步.*平台|更新.*平台"), "patch_platform", []),

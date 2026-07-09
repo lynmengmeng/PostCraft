@@ -59,8 +59,9 @@ def test_summarize_xhs_single_page_copy():
     copy = summarize_xhs_single_page_copy(title, body)
     assert len(copy["headline"]) <= 14
     assert len(copy["subheadline"]) <= 20
-    assert copy["body_text"]
-    assert len(copy["body_text"]) <= 36
+    assert copy["body_text"] == ""
+    assert copy["headline"].endswith("提案")
+    assert " · " in copy["subheadline"] or "自己" in copy["subheadline"]
 
 
 def test_refine_xhs_image_pages_single_page():

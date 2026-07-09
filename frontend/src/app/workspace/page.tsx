@@ -509,6 +509,23 @@ export default function HomePage() {
                   </div>
                 </div>
               )}
+              {(trialMetrics.pillar_distribution_30d?.length ?? 0) > 0 && (
+                <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low/30 px-5 py-3">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
+                    近 30 天栏目分布
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-on-surface-variant">
+                    {trialMetrics.pillar_distribution_30d.map((item) => (
+                      <span key={item.name}>
+                        {item.name}：{item.count} 篇（{(item.percent * 100).toFixed(0)}%）
+                      </span>
+                    ))}
+                  </div>
+                  {trialMetrics.pillar_drift_warning && (
+                    <p className="mt-2 text-xs text-amber-800">{trialMetrics.pillar_drift_warning}</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

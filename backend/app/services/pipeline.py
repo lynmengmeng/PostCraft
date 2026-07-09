@@ -36,6 +36,7 @@ from app.services.xiaohongshu_styles import (
     content_page_prompt,
     estimate_xiaohongshu_page_count,
     extract_xiaohongshu_point_sections,
+    parse_xhs_page_count_request,
     pick_style_for_content,
     polish_xiaohongshu_body,
     polish_xiaohongshu_title,
@@ -311,6 +312,7 @@ class ContentPipeline:
         updated_humanized = payload.get("humanized", humanized)
 
         patch: dict[str, Any] = {"humanized": updated_humanized, "draft": updated_humanized}
+        xhs_page_count = parse_xhs_page_count_request(message)
 
         for platform in targets:
             if platform not in PLATFORM_CONVERTERS:
@@ -323,6 +325,7 @@ class ContentPipeline:
                 style_profile,
                 updated_humanized,
                 content_categories=content_categories,
+                xhs_page_count=xhs_page_count if platform == "xiaohongshu" else None,
             )
 
         return patch
@@ -626,6 +629,7 @@ class ContentPipeline:
         style_profile: AuthorStyleProfile,
         humanized: str,
         content_categories: list[ContentCategory] | None = None,
+        xhs_page_count: int | None = None,
     ) -> dict[str, Any]:
         skill = self.skills.load(skill_name)
         if skill_name == "douyin-converter":
@@ -652,12 +656,17 @@ class ContentPipeline:
         platform_key = skill_name.replace("-converter", "")
         cat = self._resolve_project_category(project, content_categories)
         category_block = category_context_block(cat, [platform_key]) if cat else ""
+        formatting_rules = self._formatting_rules(skill_name)
+        if skill_name == "xiaohongshu-converter" and xhs_page_count:
+            formatting_rules += (
+                f"\n- 用户明确要求配图 {xhs_page_count} 张，image_pages 必须恰好 {xhs_page_count} 张"
+            )
         system = (
             f"{skill}\n\n"
             f"{category_block}"
             f"{self._style_block(style_profile, [platform_key])}\n\n"
             f"输出严格 JSON，格式: {schema_hint}\n\n"
-            f"{self._formatting_rules(skill_name)}"
+            f"{formatting_rules}"
         )
         user = f"中间体内容:\n{humanized}{platform_tip_block(project, platform_key)}"
         raw = await self.llm.complete(system, user, json_mode=True)
@@ -671,7 +680,32 @@ class ContentPipeline:
                     payload["style_theme"] = theme
         if skill_name == "xiaohongshu-converter":
             payload = self._normalize_xiaohongshu_payload(payload)
+            if xhs_page_count:
+                payload = self.reshape_xiaohongshu_image_pages(payload, xhs_page_count)
         return payload
+
+    def reshape_xiaohongshu_image_pages(
+        self,
+        xhs_data: dict[str, Any],
+        target_count: int,
+    ) -> dict[str, Any]:
+        """按用户指定张数重建小红书 image_pages 与对应 prompt。"""
+        target_count = max(1, min(XHS_MAX_PAGES, target_count))
+        title = str(xhs_data.get("title") or "")
+        body = str(xhs_data.get("body") or "")
+        style = resolve_style_for_xhs(
+            title=title,
+            body=body,
+            cover_style=str(xhs_data.get("cover_style") or ""),
+        )
+        pages = self._build_xiaohongshu_pages_from_body(
+            title,
+            body,
+            style,
+            target=target_count,
+        )
+        xhs_data["image_pages"] = pages
+        return xhs_data
 
     async def _generate_titles(
         self,
@@ -680,16 +714,31 @@ class ContentPipeline:
         humanized: str,
         count: int = 12,
         content_categories: list[ContentCategory] | None = None,
+        *,
+        search_friendly: bool = False,
     ) -> list[dict[str, Any]]:
         cat = self._resolve_project_category(project, content_categories)
         title_style_hint = cat.title_style if cat and cat.title_style else "搜索问题型为主，兼顾情绪共鸣"
+        if search_friendly:
+            title_style_hint = (
+                "搜一搜冷启动优先：搜索问题型 + 人群痛点型 + 结果承诺型为主；"
+                "少用故事型、纯情绪型标题。"
+            )
         category_block = self._category_block(project, content_categories)
+        style_weights = (
+            "至少 70% 标题使用「搜索问题型|人群痛点型|误区纠正型|对比选择型|结果承诺型」，"
+            "故事型不超过 2 个。"
+            if search_friendly
+            else ""
+        )
         system = (
             "你是中文标题策划。输出 JSON："
             '{"titles":[{"text":"","style":"搜索问题型|人群痛点型|误区纠正型|对比选择型|结果承诺型|情绪共鸣型|故事型"}]}\n'
             f"栏目标题风格要求: {title_style_hint}\n"
             "要求：标题含具体场景/人群/动作词；避免空泛词「提高」「全面」「指南」「必看」；不用震惊体。"
         )
+        if style_weights:
+            system += f"\n{style_weights}"
         user = (
             category_block
             + self._style_block(style_profile, ALL_PLATFORMS)
@@ -704,6 +753,84 @@ class ContentPipeline:
             for t in titles
             if t.get("text")
         ]
+
+    async def optimize_wechat_opening(
+        self,
+        project: ContentProject,
+        style_profile: AuthorStyleProfile,
+        on_delta: StreamCallback = None,
+        content_categories: list[ContentCategory] | None = None,
+    ) -> dict[str, Any]:
+        if on_delta:
+            await on_delta("正在优化公众号开头…")
+        wechat = project.platforms["wechat"]
+        current = wechat.model_dump(mode="json")
+        body = current.get("body", "")
+        if not body.strip():
+            return {}
+
+        coldstart = self._coldstart_rules_block()
+        category_block = self._category_block(project, content_categories)
+        system = (
+            "你是公众号冷启动编辑。仅重写正文开头前 3 段（约 80–120 字），其余正文保持不变。\n"
+            "结构：1) 具体痛点场景 2) 反常识判断 3) 本文承诺。\n"
+            "禁止宏观铺垫（随着…越来越、最近很火等）。\n"
+            f"{coldstart}\n"
+            "输出 JSON：{\"body\":\"完整 Markdown 正文\"}"
+        )
+        user = (
+            category_block
+            + self._style_block(style_profile, ["wechat"])
+            + f"\n\n当前正文:\n{body}\n\n"
+            "请只优化开头前 3 段，输出完整正文。"
+        )
+        raw = await self.llm.complete(system, user, json_mode=True)
+        payload = parse_json_from_text(raw, fallback_key="body")
+        merged = {**current, "body": payload.get("body") or body}
+        merged = self._normalize_wechat_payload(merged)
+        if project.cover_assets:
+            merged = finalize_wechat_content(
+                merged,
+                [a.model_dump(mode="json") for a in project.cover_assets],
+            )
+        return {"platforms.wechat": merged}
+
+    async def add_wechat_engagement_question(
+        self,
+        project: ContentProject,
+        style_profile: AuthorStyleProfile,
+        on_delta: StreamCallback = None,
+    ) -> dict[str, Any]:
+        if on_delta:
+            await on_delta("正在添加互动提问…")
+        wechat = project.platforms["wechat"]
+        current = wechat.model_dump(mode="json")
+        body = current.get("body", "")
+        if not body.strip():
+            return {}
+
+        system = (
+            "你是公众号编辑。在正文末尾追加 1–2 行具体互动提问，帮助读者留言。\n"
+            "要求：具体问题 + A/B 或简短选项（如「留言区打：会 / 不会」）；"
+            "不要用「欢迎留言」「希望对你有帮助」等泛泛结尾。\n"
+            "若已有具体互动提问，则优化为更具体的问题。\n"
+            "输出 JSON：{\"body\":\"完整 Markdown 正文\"}"
+        )
+        user = (
+            self._style_block(style_profile, ["wechat"])
+            + f"\n\n当前正文:\n{body}\n\n"
+            "请在文末追加或优化一条具体互动提问，输出完整正文。"
+        )
+        raw = await self.llm.complete(system, user, json_mode=True)
+        payload = parse_json_from_text(raw, fallback_key="body")
+        merged = {**current, "body": payload.get("body") or body}
+        merged = self._normalize_wechat_payload(merged)
+        if project.cover_assets:
+            merged = finalize_wechat_content(
+                merged,
+                [a.model_dump(mode="json") for a in project.cover_assets],
+            )
+        return {"platforms.wechat": merged}
 
     async def _generate_cover_prompts(
         self,
@@ -875,8 +1002,11 @@ class ContentPipeline:
         title: str,
         body: str,
         style,
+        *,
+        target: int | None = None,
     ) -> list[dict[str, Any]]:
-        target = estimate_xiaohongshu_page_count(title, body)
+        target = target or estimate_xiaohongshu_page_count(title, body)
+        target = max(1, min(XHS_MAX_PAGES, target))
         sections = split_body_sections(body)
         points = extract_xiaohongshu_point_sections(body)
         hook = sections[0][:40] if sections else ""
@@ -1115,6 +1245,9 @@ class ContentPipeline:
             f"- 禁用表达（全文不得出现）: {banned}",
             f"- 可复用个人素材（合适时自然融入）:\n{snippets or '  - 无'}",
         ]
+        positioning = (style_profile.account_positioning or "").strip()
+        if positioning:
+            lines.insert(1, f"- 账号定位（全文须服务此人群与问题边界）: {positioning}")
         defaults = style_profile.platform_defaults or {}
         if platforms:
             for platform in platforms:

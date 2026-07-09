@@ -42,6 +42,20 @@ def test_normalize_xiaohongshu_payload_builds_image_pages():
     assert payload["tags"] == ["生活观察", "农村"]
 
 
+def test_reshape_xiaohongshu_image_pages_to_single():
+    pipeline = ContentPipeline(_FakeLLM(), _FakeSkills())  # type: ignore[arg-type]
+    body = "开头\n\n【要点一】a\n\n【要点二】b\n\n【要点三】c\n\n评论区聊聊"
+    xhs = {
+        "title": "干货",
+        "body": body,
+        "cover_style": "journaling_style",
+        "image_pages": [{"page": i, "role": "content"} for i in range(1, 7)],
+    }
+    reshaped = pipeline.reshape_xiaohongshu_image_pages(xhs, 1)
+    assert len(reshaped["image_pages"]) == 1
+    assert reshaped["image_pages"][0]["role"] == "cover"
+
+
 def test_generate_xiaohongshu_carousel_assets():
     pipeline = ContentPipeline(_FakeLLM(), _FakeSkills())  # type: ignore[arg-type]
     from app.models.schemas import ContentProject

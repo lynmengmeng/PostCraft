@@ -2,6 +2,8 @@ import type { ContentProject, Platform, ProjectDraftExport, WechatContent } from
 import { hasRealImage } from "./wechat-assets";
 import { getPlatformCopyText } from "@/components/preview/PlatformPreview";
 import { renderWechatCopyHtml } from "./wechat-html";
+import { validateWechatColdstart } from "./wechat-coldstart-check";
+export type { WechatValidationCheck } from "./wechat-coldstart-check";
 
 export function exportAllPlatforms(project: ContentProject): void {
   const sections = (["wechat", "xiaohongshu", "douyin"] as Platform[]).map(
@@ -53,11 +55,6 @@ export function exportWechatHtml(project: ContentProject): void {
   URL.revokeObjectURL(url);
 }
 
-export interface WechatValidationCheck {
-  level: "error" | "warn" | "info";
-  message: string;
-}
-
 export function validateWechatContent(
   content: WechatContent,
   coverAssets: ContentProject["cover_assets"],
@@ -98,6 +95,7 @@ export function validateWechatContent(
       });
     }
   }
+  checks.push(...validateWechatColdstart(content));
   return checks;
 }
 

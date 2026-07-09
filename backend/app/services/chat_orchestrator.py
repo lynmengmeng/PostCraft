@@ -359,6 +359,7 @@ class ChatOrchestrator:
             "refine_draft": "继续完善初稿",
             "layout_images": "调整公众号配图布局",
             "generate_xhs_carousel": "一键生成全部轮播图",
+            "xhs_page_count": "调整小红书配图张数",
         }
         return labels.get(parsed.intent, parsed.intent)
 
@@ -481,14 +482,82 @@ class ChatOrchestrator:
                     humanized,
                     parsed.title_count,
                     content_categories=content_categories,
+                    search_friendly=parsed.title_search_friendly,
                 )
+                label = "搜一搜友好" if parsed.title_search_friendly else ""
                 return ContentPatch(
                     intent="generate_titles",
                     target_platforms=["all"],
-                    summary=f"已生成 {len(titles)} 个标题备选。",
+                    summary=f"已生成 {len(titles)} 个{label}标题备选。",
                     patch={"titles": titles},
                 )
             return build_mock_titles(project, parsed.title_count)
+
+        if parsed.intent == "optimize_opening":
+            wechat = project.platforms.get("wechat")
+            if not wechat or not (wechat.body or "").strip():
+                return ContentPatch(
+                    intent="optimize_opening",
+                    target_platforms=["wechat"],
+                    summary="请先生成公众号正文，再优化开头。",
+                    patch={},
+                )
+            if self.llm.status().configured:
+                patch_data = await self.pipeline.optimize_wechat_opening(
+                    project,
+                    style_profile,
+                    on_delta=on_delta,
+                    content_categories=content_categories,
+                )
+                if not patch_data:
+                    return ContentPatch(
+                        intent="optimize_opening",
+                        target_platforms=["wechat"],
+                        summary="公众号正文为空，无法优化开头。",
+                        patch={},
+                    )
+                return ContentPatch(
+                    intent="optimize_opening",
+                    target_platforms=["wechat"],
+                    summary="已按冷启动规则优化开头前 3 段（痛点 → 反常识 → 本文承诺）。",
+                    patch=patch_data,
+                    changes=self._changes_from_patch(patch_data),
+                )
+            return ContentPatch(
+                intent="optimize_opening",
+                target_platforms=["wechat"],
+                summary="配置 LLM 后可自动优化开头。",
+                patch={},
+            )
+
+        if parsed.intent == "add_engagement_question":
+            wechat = project.platforms.get("wechat")
+            if not wechat or not (wechat.body or "").strip():
+                return ContentPatch(
+                    intent="add_engagement_question",
+                    target_platforms=["wechat"],
+                    summary="请先生成公众号正文，再添加互动提问。",
+                    patch={},
+                )
+            if self.llm.status().configured:
+                patch_data = await self.pipeline.add_wechat_engagement_question(
+                    project,
+                    style_profile,
+                    on_delta=on_delta,
+                )
+                return ContentPatch(
+                    intent="add_engagement_question",
+                    target_platforms=["wechat"],
+                    summary="已在文末添加具体互动提问。",
+                    patch=patch_data,
+                    changes=self._changes_from_patch(patch_data),
+                )
+            return ContentPatch(
+                intent="add_engagement_question",
+                target_platforms=["wechat"],
+                summary="配置 LLM 后可自动添加互动提问。",
+                patch={},
+            )
 
         if parsed.intent == "cover_assets" or parsed.intent == "regenerate_cover":
             style_hint = _cover_style_hint(message)
@@ -564,6 +633,36 @@ class ChatOrchestrator:
                 intent="generate_xhs_carousel",
                 target_platforms=["xiaohongshu"],
                 summary=f"已批量生成 {generated} 张小红书轮播图，可在预览区查看。",
+                patch=patch_data,
+                changes=self._changes_from_patch(patch_data),
+            )
+
+        if parsed.intent == "xhs_page_count":
+            xhs = project.platforms.get("xiaohongshu")
+            if not xhs or not (xhs.body or "").strip():
+                return ContentPatch(
+                    intent="xhs_page_count",
+                    target_platforms=["xiaohongshu"],
+                    summary="请先生成小红书内容，再调整配图张数。",
+                    patch={},
+                )
+            count = parsed.xhs_page_count or 1
+            if on_delta:
+                await on_delta(f"正在将小红书配图调整为 {count} 张…")
+            xhs_data = xhs.model_dump(mode="json")
+            xhs_data = self.pipeline.reshape_xiaohongshu_image_pages(xhs_data, count)
+            patch_data = {"platforms.xiaohongshu": xhs_data}
+            patch_data = await self._ensure_cover_assets(
+                project,
+                patch_data,
+                style_profile,
+                content_categories=content_categories,
+            )
+            label = "单图笔记" if count == 1 else f"{count} 张轮播"
+            return ContentPatch(
+                intent="xhs_page_count",
+                target_platforms=["xiaohongshu"],
+                summary=f"已将小红书配图方案调整为 {label}，可在右侧轮播区查看。",
                 patch=patch_data,
                 changes=self._changes_from_patch(patch_data),
             )
@@ -715,6 +814,13 @@ class ChatOrchestrator:
                     patch_data = self._finalize_wechat_in_patch(
                         patch_data,
                         [a.model_dump(mode="json") for a in project.cover_assets],
+                    )
+                if "xiaohongshu" in targets:
+                    patch_data = await self._ensure_cover_assets(
+                        project,
+                        patch_data,
+                        style_profile,
+                        content_categories=content_categories,
                     )
                 return ContentPatch(
                     intent="patch_platform",

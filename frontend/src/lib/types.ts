@@ -240,6 +240,7 @@ export interface Topic {
 
 export interface AuthorStyleProfile {
   tone_preference: string;
+  account_positioning: string;
   banned_phrases: string[];
   personal_snippets: string[];
   platform_defaults: Record<string, string>;

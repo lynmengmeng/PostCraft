@@ -68,6 +68,28 @@ def extract_xiaohongshu_point_sections(body: str) -> list[str]:
     return points
 
 
+def parse_xhs_page_count_request(text: str) -> int | None:
+    """从用户对话中解析小红书配图张数诉求（1-6），无法识别时返回 None。"""
+    normalized = (text or "").strip()
+    if not normalized:
+        return None
+
+    if re.search(
+        r"只要\s*一\s*张|仅\s*要?\s*一\s*张|仅\s*一\s*张|只需要?\s*一\s*张|单图|不要\s*轮播|不需要\s*轮播",
+        normalized,
+    ):
+        return 1
+
+    match = re.search(r"(\d+)\s*张(?:图|图片|配图|轮播)?", normalized)
+    if match:
+        return max(XHS_MIN_PAGES, min(XHS_MAX_PAGES, int(match.group(1))))
+
+    if re.search(r"一\s*张(?:图|图片|配图)?", normalized):
+        return 1
+
+    return None
+
+
 def estimate_xiaohongshu_page_count(title: str, body: str) -> int:
     """按内容复杂度估算配图张数：短内容 1 张，干货轮播最多 6 张。"""
     text = (body or "").strip()

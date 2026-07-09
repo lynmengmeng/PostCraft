@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import AsyncIterator
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -530,6 +530,36 @@ def trial_summary(db: Session = Depends(get_db)) -> TrialMetricsSummary:
             }
         )
 
+    cutoff = datetime.utcnow() - timedelta(days=30)
+    recent_pillar_counts: dict[str, int] = {}
+    for project in projects:
+        if project.updated_at < cutoff:
+            continue
+        pillar = (project.content_pillar or project.topic_meta.content_pillar or "未分类").strip() or "未分类"
+        if pillar == "未分类":
+            continue
+        recent_pillar_counts[pillar] = recent_pillar_counts.get(pillar, 0) + 1
+
+    recent_total = sum(recent_pillar_counts.values())
+    pillar_distribution_30d = []
+    for name, count in sorted(recent_pillar_counts.items(), key=lambda item: (-item[1], item[0])):
+        pillar_distribution_30d.append(
+            {
+                "name": name,
+                "count": count,
+                "percent": round(count / recent_total, 4) if recent_total else 0.0,
+            }
+        )
+
+    pillar_drift_warning = ""
+    if recent_total >= 3:
+        top_percent = pillar_distribution_30d[0]["percent"] if pillar_distribution_30d else 0.0
+        active_pillars = len(pillar_distribution_30d)
+        if top_percent < 0.5 or active_pillars > 3:
+            pillar_drift_warning = (
+                "账号标签可能不够清晰，建议收窄到 2–3 个固定栏目，保持选题方向一致。"
+            )
+
     return TrialMetricsSummary(
         total_projects=total,
         completed_projects=completed,
@@ -537,6 +567,8 @@ def trial_summary(db: Session = Depends(get_db)) -> TrialMetricsSummary:
         avg_chat_rounds=round(avg_rounds, 2),
         multi_platform_rate=round(multi_platform / total, 4) if total else 0.0,
         by_pillar=by_pillar,
+        pillar_distribution_30d=pillar_distribution_30d,
+        pillar_drift_warning=pillar_drift_warning,
     )
 
 

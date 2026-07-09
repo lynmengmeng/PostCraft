@@ -249,12 +249,17 @@ export function CategoryManager({
               ))}
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
-              <input
-                value={form.title_style ?? ""}
-                onChange={(e) => setForm({ ...form, title_style: e.target.value })}
-                placeholder="标题风格"
-                className="rounded-lg border border-outline-variant/30 px-3 py-2 text-sm outline-none focus:border-primary"
-              />
+              <div>
+                <input
+                  value={form.title_style ?? ""}
+                  onChange={(e) => setForm({ ...form, title_style: e.target.value })}
+                  placeholder="标题风格"
+                  className="w-full rounded-lg border border-outline-variant/30 px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+                <p className="mt-1 text-[11px] text-on-surface-variant/70">
+                  新号冷启动建议优先「搜索关键词 + 人群 + 结果」型标题
+                </p>
+              </div>
               <input
                 value={form.cover_mood ?? ""}
                 onChange={(e) => setForm({ ...form, cover_mood: e.target.value })}

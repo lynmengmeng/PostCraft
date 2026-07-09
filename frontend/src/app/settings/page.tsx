@@ -61,6 +61,18 @@ export default function SettingsPage() {
       </div>
       <div className="space-y-4 rounded-2xl border border-outline-variant/30 bg-surface-container-lowest p-5">
         <label className="block text-sm">
+          <span className="text-on-surface-variant">账号定位（一句话）</span>
+          <input
+            value={profile.account_positioning ?? ""}
+            onChange={(e) => setProfile({ ...profile, account_positioning: e.target.value })}
+            placeholder="例如：帮学生和家长理解 AI 时代的学习与专业选择"
+            className="mt-1 w-full rounded-xl border border-outline-variant/30 px-3 py-2 outline-none focus:border-primary"
+          />
+          <p className="mt-1 text-xs text-on-surface-variant/70">
+            会注入到每次内容生成，帮助保持账号标签清晰、选题不散。
+          </p>
+        </label>
+        <label className="block text-sm">
           <span className="text-on-surface-variant">语气偏好</span>
           <input
             value={profile.tone_preference}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ContentEditor, type EditorTab } from "@/components/studio/ContentEditor";
 import { ChatComposer, type ChatScope } from "@/components/studio/ChatComposer";
@@ -17,6 +17,7 @@ import { CategoryPicker } from "@/components/content/CategoryPicker";
 import { ProjectSourceBadges } from "@/components/content/ProjectSourceBadges";
 import { TrendAnalysisPanel } from "@/components/tools/TrendAnalysisPanel";
 import { useContentCategories } from "@/hooks/useContentCategories";
+import { useBackendQuery } from "@/hooks/useBackendQuery";
 import {
   PreviewPanel,
   getPlatformCopyText,
@@ -46,6 +47,7 @@ import {
 } from "@/lib/studio-utils";
 import type { ChatMessage, ContentProject, Platform } from "@/lib/types";
 import { copyWechatRichHtml } from "@/lib/wechat-html";
+import { scoreWechatTitle } from "@/lib/wechat-title-score";
 
 const HEALTH_DISCLAIMER =
   "以上仅为个人观察与生活记录，不构成医疗建议。如有健康问题，请咨询专业医生。";
@@ -117,7 +119,18 @@ export default function CreateStudioPage() {
   const [actionInfo, setActionInfo] = useState("");
   const [autoDraftPending, setAutoDraftPending] = useState(false);
   const { categories, findByName } = useContentCategories();
+  const { data: styleProfile } = useBackendQuery(() => api.getStyleProfile(), []);
   const [chatScope, setChatScope] = useState<ChatScope>("auto");
+
+  const sortedTitleEntries = useMemo(() => {
+    if (!project?.titles.length) return [];
+    return project.titles
+      .map((title, index) => ({ title, index }))
+      .sort(
+        (a, b) =>
+          scoreWechatTitle(b.title.text).score - scoreWechatTitle(a.title.text).score,
+      );
+  }, [project?.titles]);
 
   const selectEditorTab = useCallback((tab: EditorTab) => {
     setEditorTab(tab);
@@ -503,6 +516,12 @@ export default function CreateStudioPage() {
     try {
       const updated = await api.updateProject(project.id, { content_pillar });
       setProject(updated);
+      const cat = findByName(content_pillar);
+      const hasPositioning = Boolean(styleProfile?.account_positioning?.trim());
+      if (cat?.title_style?.includes("情绪") && hasPositioning) {
+        setActionInfo("该栏目偏情绪标题，冷启动期可优先用搜一搜友好标题");
+        setTimeout(() => setActionInfo(""), 5000);
+      }
       if (regenerate) {
         await sendChat("按新栏目重写观察型初稿", updated, { action: "generate_draft" });
       }
@@ -738,6 +757,14 @@ export default function CreateStudioPage() {
                 )}
                 <button
                   type="button"
+                  onClick={() => sendChat("给我 10 个搜一搜友好标题")}
+                  disabled={sending}
+                  className="text-xs text-primary underline disabled:opacity-50"
+                >
+                  搜一搜标题
+                </button>
+                <button
+                  type="button"
                   onClick={() => sendChat("给我 20 个标题")}
                   disabled={sending}
                   className="text-xs text-primary underline disabled:opacity-50"
@@ -747,15 +774,23 @@ export default function CreateStudioPage() {
               </div>
             </div>
             <p className="mt-2 text-xs text-on-surface-variant/70">
-              点击标题应用到当前平台；点右侧复制图标可单独复制到剪贴板（公众号标题需粘贴到后台标题栏）。
+              点击标题应用到当前平台；标签「搜索友好」更适合新号冷启动；点右侧复制图标可单独复制。
             </p>
             {project.titles.length === 0 ? (
               <p className="mt-3 text-sm leading-relaxed text-on-surface-variant">
-                尚未生成标题备选。点击「生成标题」，或在 AI 协作中发送「给我 20 个标题」。
+                尚未生成标题备选。点击「搜一搜标题」或「生成标题」，或在 AI 协作中发送快捷指令。
               </p>
             ) : (
               <div className="mt-3 space-y-2">
-                {project.titles.map((title, index) => (
+                {sortedTitleEntries.map(({ title, index }) => {
+                  const { label } = scoreWechatTitle(title.text);
+                  const labelClass =
+                    label === "搜索友好"
+                      ? "bg-primary/15 text-primary"
+                      : label === "情绪向"
+                        ? "bg-amber-100 text-amber-900"
+                        : "bg-on-surface-variant/10 text-on-surface-variant";
+                  return (
                   <div
                     key={`${title.text}-${index}`}
                     className={`flex items-stretch gap-1 rounded-lg ${
@@ -769,7 +804,12 @@ export default function CreateStudioPage() {
                       onClick={() => applyTitle(index)}
                       className="min-w-0 flex-1 rounded-lg px-3 py-2 text-left text-sm hover:bg-surface-container"
                     >
-                      <span className="text-xs text-on-surface-variant">{title.style}</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-on-surface-variant">{title.style}</span>
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${labelClass}`}>
+                          {label}
+                        </span>
+                      </div>
                       <div className="break-words">{title.text}</div>
                     </button>
                     <button
@@ -784,7 +824,8 @@ export default function CreateStudioPage() {
                       />
                     </button>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

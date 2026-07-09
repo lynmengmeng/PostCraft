@@ -226,6 +226,7 @@ class Topic(BaseModel):
 
 class AuthorStyleProfile(BaseModel):
     tone_preference: str = "温和观察"
+    account_positioning: str = ""
     banned_phrases: list[str] = Field(
         default_factory=lambda: ["震惊", "必看", "赶紧转发", "不看后悔"]
     )
@@ -382,6 +383,12 @@ class PillarMetrics(BaseModel):
     multi_platform_rate: float
 
 
+class PillarDistributionItem(BaseModel):
+    name: str
+    count: int
+    percent: float
+
+
 class TrialMetricsSummary(BaseModel):
     total_projects: int
     completed_projects: int
@@ -389,6 +396,8 @@ class TrialMetricsSummary(BaseModel):
     avg_chat_rounds: float
     multi_platform_rate: float
     by_pillar: list[PillarMetrics] = Field(default_factory=list)
+    pillar_distribution_30d: list[PillarDistributionItem] = Field(default_factory=list)
+    pillar_drift_warning: str = ""
 
 
 class InspirationCreate(BaseModel):

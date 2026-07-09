@@ -88,6 +88,12 @@ export interface PillarMetrics {
   multi_platform_rate: number;
 }
 
+export interface PillarDistributionItem {
+  name: string;
+  count: number;
+  percent: number;
+}
+
 export interface TrialMetricsSummary {
   total_projects: number;
   completed_projects: number;
@@ -95,6 +101,8 @@ export interface TrialMetricsSummary {
   avg_chat_rounds: number;
   multi_platform_rate: number;
   by_pillar: PillarMetrics[];
+  pillar_distribution_30d: PillarDistributionItem[];
+  pillar_drift_warning: string;
 }
 
 export type ContentCategoryPayload = {

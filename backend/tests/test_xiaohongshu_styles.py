@@ -3,6 +3,7 @@ from app.services.xiaohongshu_styles import (
     estimate_xiaohongshu_page_count,
     get_style,
     load_cover_styles,
+    parse_xhs_page_count_request,
     pick_style_for_content,
     polish_xiaohongshu_body,
     styles_reference_block,
@@ -26,6 +27,12 @@ def test_pick_style_for_guide_content():
 def test_pick_style_for_rural_observation():
     style = pick_style_for_content("回村观察", "农村老家田园生活")
     assert "warm_documentary" in style.id or "split_screen" in style.id
+
+
+def test_parse_xhs_page_count_request_single_image():
+    assert parse_xhs_page_count_request("我只需要处理成只要一张图片") == 1
+    assert parse_xhs_page_count_request("改成单图笔记") == 1
+    assert parse_xhs_page_count_request("配图改成 3 张") == 3
 
 
 def test_estimate_page_count_single_image():

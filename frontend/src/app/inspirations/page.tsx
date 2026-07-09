@@ -6,6 +6,7 @@ import { useShell } from "@/components/layout/AppShell";
 import { Icon } from "@/components/ui/Icon";
 import { LoadError } from "@/components/ui/LoadError";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
+import { DailyInspirationRecommendations } from "@/components/inspirations/DailyInspirationRecommendations";
 import { api } from "@/lib/api";
 import { resolveImageUrl } from "@/lib/export";
 import type { Inspiration } from "@/lib/types";
@@ -403,6 +404,16 @@ export default function InspirationsPage() {
             </button>
           </header>
 
+          <DailyInspirationRecommendations
+            onSaved={() => void reload()}
+            onFillForm={(text, tags) => {
+              setCreateMode("manual");
+              setContent(text);
+              setTagsInput(tags);
+              scrollToForm();
+            }}
+          />
+
           <div
             ref={formRef}
             className="mb-12 rounded-xl border border-outline-variant/40 bg-surface p-8 shadow-sm"
@@ -624,6 +635,8 @@ export default function InspirationsPage() {
       </div>
 
       <aside className="hidden w-80 shrink-0 flex-col gap-10 border-l border-outline-variant/50 bg-surface p-8 2xl:flex">
+        <DailyInspirationRecommendations compact onSaved={() => void reload()} />
+
         <div>
           <h3 className="mb-6 text-[11px] font-bold uppercase tracking-[0.15em] text-on-surface-variant">
             最近浏览

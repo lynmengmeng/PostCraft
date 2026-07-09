@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from app.models.schemas import ContentProject, CoverAsset
 from app.services.xiaohongshu_styles import (
     build_xhs_page_prompt,
+    refine_xhs_image_pages,
     resolve_style_for_xhs,
 )
 
@@ -53,7 +54,8 @@ def refresh_xhs_asset_prompts(project: ContentProject) -> list[CoverAsset]:
         body=xhs.body or "",
         cover_style=xhs.cover_style or "",
     )
-    pages = xhs.image_pages or []
+    raw_pages = [page.model_dump(mode="json") for page in (xhs.image_pages or [])]
+    pages = refine_xhs_image_pages(raw_pages, title=xhs.title or "", body=xhs.body or "")
     xhs_assets = [a for a in project.cover_assets if a.platform == "xiaohongshu"]
     xhs_assets.sort(key=lambda a: a.after_paragraph if a.after_paragraph is not None else 0)
     total_pages = max(len(pages), len(xhs_assets), 1)
@@ -61,10 +63,10 @@ def refresh_xhs_asset_prompts(project: ContentProject) -> list[CoverAsset]:
     assets = list(project.cover_assets)
     for slot, asset in enumerate(xhs_assets):
         page = pages[slot] if slot < len(pages) else None
-        role = str(getattr(page, "role", None) or ("cover" if slot == 0 else "content"))
-        headline = str(getattr(page, "headline", None) or asset.headline or xhs.title or "")[:20]
-        subheadline = str(getattr(page, "subheadline", None) or asset.subheadline or "")[:24]
-        body_text = str(getattr(page, "body_text", None) or "")
+        role = str((page or {}).get("role") or ("cover" if slot == 0 else "content"))
+        headline = str((page or {}).get("headline") or asset.headline or xhs.title or "")
+        subheadline = str((page or {}).get("subheadline") or asset.subheadline or "")
+        body_text = str((page or {}).get("body_text") or "")
 
         prompt = build_xhs_page_prompt(
             style=style,
@@ -78,7 +80,14 @@ def refresh_xhs_asset_prompts(project: ContentProject) -> list[CoverAsset]:
 
         for index, existing in enumerate(assets):
             if existing.asset_index == asset.asset_index and existing.platform == "xiaohongshu":
-                assets[index] = CoverAsset(**{**existing.model_dump(), "prompt": prompt})
+                assets[index] = CoverAsset(
+                    **{
+                        **existing.model_dump(),
+                        "headline": headline,
+                        "subheadline": subheadline,
+                        "prompt": prompt,
+                    }
+                )
                 break
 
     return assets

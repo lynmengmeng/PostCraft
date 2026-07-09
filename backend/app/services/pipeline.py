@@ -40,8 +40,10 @@ from app.services.xiaohongshu_styles import (
     pick_style_for_content,
     polish_xiaohongshu_body,
     polish_xiaohongshu_title,
+    refine_xhs_image_pages,
     resolve_style_for_xhs,
     styles_reference_block,
+    summarize_xhs_single_page_copy,
     trim_xiaohongshu_pages,
     XHS_MAX_PAGES,
     split_body_sections,
@@ -682,7 +684,88 @@ class ContentPipeline:
             payload = self._normalize_xiaohongshu_payload(payload)
             if xhs_page_count:
                 payload = self.reshape_xiaohongshu_image_pages(payload, xhs_page_count)
+            payload = await self.refine_xhs_payload_image_copy(payload)
         return payload
+
+    async def refine_xhs_payload_image_copy(self, xhs_data: dict[str, Any]) -> dict[str, Any]:
+        title = str(xhs_data.get("title") or "")
+        body = str(xhs_data.get("body") or "")
+        pages = list(xhs_data.get("image_pages") or [])
+        if not pages:
+            return xhs_data
+
+        pages = refine_xhs_image_pages(pages, title=title, body=body)
+        if len(pages) == 1 and self.llm.status().configured:
+            pages = await self._llm_refine_xhs_image_copy(title, body, pages)
+
+        style = resolve_style_for_xhs(
+            title=title,
+            body=body,
+            cover_style=str(xhs_data.get("cover_style") or ""),
+        )
+        total_pages = len(pages)
+        for index, page in enumerate(pages):
+            role = str(page.get("role") or ("cover" if index == 0 else "content"))
+            page["prompt"] = build_xhs_page_prompt(
+                style=style,
+                role=role,
+                headline=str(page.get("headline") or title),
+                subheadline=str(page.get("subheadline") or ""),
+                body_text=str(page.get("body_text") or ""),
+                page_index=index + 1,
+                total_pages=total_pages,
+            )
+
+        xhs_data["image_pages"] = pages
+        return xhs_data
+
+    async def _llm_refine_xhs_image_copy(
+        self,
+        title: str,
+        body: str,
+        pages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        single_page = len(pages) == 1
+        system = (
+            "你是小红书配图文案策划。根据笔记 title/body，为配图页写「可直接渲染到图片上」的短文案。\n"
+            "规则：\n"
+            "- 必须重新提炼总结，禁止从正文长句硬截取\n"
+            "- headline 主标题语义完整，"
+            f"{'≤14' if single_page else '≤12'} 字\n"
+            f"- subheadline 副标题一句话 hook，≤{'20' if single_page else '16'} 字\n"
+            + (
+                "- body_text 写 2-3 个要点关键词，用 · 分隔，≤36 字\n"
+                if single_page
+                else "- body_text 为该页要点，≤40 字\n"
+            )
+            + '输出 JSON：{"pages":[{"headline":"","subheadline":"","body_text":""}]}'
+        )
+        user = (
+            f"标题: {title}\n\n正文:\n{body[:1200]}\n\n"
+            f"当前页方案:\n{json.dumps(pages, ensure_ascii=False)}"
+        )
+        raw = await self.llm.complete(system, user, json_mode=True)
+        payload = parse_json_from_text(raw, fallback_key="pages")
+        refined_pages = payload.get("pages") if isinstance(payload.get("pages"), list) else []
+        if not refined_pages:
+            return pages
+
+        merged: list[dict[str, Any]] = []
+        for index, page in enumerate(pages):
+            patch = refined_pages[index] if index < len(refined_pages) and isinstance(refined_pages[index], dict) else {}
+            merged_page = {
+                **page,
+                **{k: v for k, v in patch.items() if k in {"headline", "subheadline", "body_text"} and v},
+            }
+            merged.append(
+                refine_xhs_page_copy(
+                    merged_page,
+                    title=title,
+                    body=body,
+                    single_page=single_page,
+                )
+            )
+        return merged
 
     def reshape_xiaohongshu_image_pages(
         self,
@@ -977,14 +1060,15 @@ class ContentPipeline:
         elif len(pages) > XHS_MAX_PAGES:
             pages = trim_xiaohongshu_pages(pages)
 
+        pages = refine_xhs_image_pages(pages, title=title, body=body)
         total_pages = len(pages)
         for index, page in enumerate(pages):
             role = str(page.get("role") or ("cover" if index == 0 else "content"))
             page["prompt"] = build_xhs_page_prompt(
                 style=style,
                 role=role,
-                headline=str(page.get("headline") or title)[:20],
-                subheadline=str(page.get("subheadline") or "")[:24],
+                headline=str(page.get("headline") or title),
+                subheadline=str(page.get("subheadline") or ""),
                 body_text=str(page.get("body_text") or ""),
                 page_index=index + 1,
                 total_pages=total_pages,
@@ -1012,18 +1096,13 @@ class ContentPipeline:
         hook = sections[0][:40] if sections else ""
 
         if target == 1:
+            copy = summarize_xhs_single_page_copy(title, body)
             return [
                 {
                     "page": 1,
                     "role": "cover",
-                    "headline": title[:20],
-                    "subheadline": hook[:30],
-                    "body_text": body[:120],
-                    "prompt": style.image_prompt(
-                        headline=title[:16],
-                        subheadline=hook[:24],
-                        extra="单图笔记，信息集中在一页",
-                    ),
+                    **copy,
+                    "prompt": "",
                 }
             ]
 
@@ -1107,12 +1186,12 @@ class ContentPipeline:
             if not isinstance(page, dict):
                 continue
             role = str(page.get("role") or "content")
-            headline = str(page.get("headline") or "")[:20]
-            subheadline = str(page.get("subheadline") or "")[:24]
+            headline = str(page.get("headline") or "") or str(xhs.get("title") or "")
+            subheadline = str(page.get("subheadline") or "")
             prompt = build_xhs_page_prompt(
                 style=style,
                 role=role,
-                headline=headline or str(xhs.get("title") or "")[:20],
+                headline=headline,
                 subheadline=subheadline,
                 body_text=str(page.get("body_text") or ""),
                 page_index=offset + 1,
@@ -1122,7 +1201,7 @@ class ContentPipeline:
                 prompt = f"{cover_mood}。{prompt}"
             asset = CoverAsset(
                 platform="xiaohongshu",
-                headline=headline or str(xhs.get("title") or "")[:20],
+                headline=headline,
                 subheadline=subheadline,
                 prompt=prompt,
                 after_paragraph=offset,
@@ -1218,7 +1297,10 @@ class ContentPipeline:
                 "- 必须输出 image_pages：1-6 张图方案（按内容复杂度决定，短感悟可 1 张，干货轮播最多 6 张）\n"
                 "  · 仅 1 张时：role=cover，标题+核心信息合一\n"
                 "  · 2-6 张时：第 1 张 role=cover；中间 role=content 每张一个要点；可选最后 1 张 role=summary\n"
-                "  · 每张 headline ≤12字，body_text 为该页要点\n"
+                "  · image_pages 的 headline/subheadline/body_text 必须是为配图单独提炼的短句，"
+                "禁止从正文长段落硬截取\n"
+                "  · 单图：headline≤14字、subheadline≤20字、body_text 写 2-3 个要点关键词（· 分隔，≤36字）\n"
+                "  · 轮播封面：headline≤14字、subheadline≤20字；content 页 headline≤12字、body_text≤40字\n"
                 "  · 每页 prompt 描述 3:4 竖版构图与视觉风格"
             )
         if skill_name == "douyin-converter":

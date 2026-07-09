@@ -2,8 +2,8 @@ import type { ContentProject, Platform, ProjectDraftExport, WechatContent } from
 import { hasRealImage } from "./wechat-assets";
 import { getPlatformCopyText } from "@/components/preview/PlatformPreview";
 import { renderWechatCopyHtml } from "./wechat-html";
-import { validateWechatColdstart } from "./wechat-coldstart-check";
-export type { WechatValidationCheck } from "./wechat-coldstart-check";
+import { validateWechatColdstart, type WechatValidationCheck } from "./wechat-coldstart-check";
+export type { WechatValidationCheck };
 
 export function exportAllPlatforms(project: ContentProject): void {
   const sections = (["wechat", "xiaohongshu", "douyin"] as Platform[]).map(

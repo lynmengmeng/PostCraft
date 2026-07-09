@@ -651,6 +651,7 @@ class ChatOrchestrator:
                 await on_delta(f"正在将小红书配图调整为 {count} 张…")
             xhs_data = xhs.model_dump(mode="json")
             xhs_data = self.pipeline.reshape_xiaohongshu_image_pages(xhs_data, count)
+            xhs_data = await self.pipeline.refine_xhs_payload_image_copy(xhs_data)
             patch_data = {"platforms.xiaohongshu": xhs_data}
             patch_data = await self._ensure_cover_assets(
                 project,

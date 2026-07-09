@@ -13,15 +13,20 @@ class _FakeSkills:
 
 def test_normalize_xiaohongshu_payload_single_image():
     pipeline = ContentPipeline(_FakeLLM(), _FakeSkills())  # type: ignore[arg-type]
+    title = "夏夜太短，5个让夜晚变长的幸福提案"
+    body = "白天属于责任，夜晚才真正属于自己。与其刷短视频消磨时间，不如留一点空白。"
     payload = pipeline._normalize_xiaohongshu_payload(
         {
-            "title": "今天的小确幸",
-            "body": "回村路上看到晚霞，突然觉得很治愈 🌅",
+            "title": title,
+            "body": body,
             "tags": ["生活"],
         }
     )
     assert len(payload["image_pages"]) == 1
     assert payload["image_pages"][0]["role"] == "cover"
+    assert len(payload["image_pages"][0]["headline"]) <= 14
+    assert payload["image_pages"][0]["headline"].endswith("提案")
+    assert len(payload["image_pages"][0]["subheadline"]) <= 20
 
 
 def test_normalize_xiaohongshu_payload_builds_image_pages():

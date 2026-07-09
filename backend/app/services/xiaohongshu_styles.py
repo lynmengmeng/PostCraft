@@ -53,6 +53,153 @@ _STYLE_BEST_FOR: dict[str, str] = {
 _DEFAULT_STYLE = "warm_documentary_photography_of_a_rural_sunset_over"
 XHS_MIN_PAGES = 1
 XHS_MAX_PAGES = 6
+XHS_IMAGE_HEADLINE_MAX = 14
+XHS_IMAGE_SUBHEADLINE_MAX = 20
+XHS_IMAGE_SINGLE_BODY_MAX = 36
+
+
+def truncate_xhs_copy(text: str, max_len: int) -> str:
+    """在标点或词边界截断，避免硬切导致缺字。"""
+    normalized = re.sub(r"\s+", "", (text or "").strip())
+    if not normalized or len(normalized) <= max_len:
+        return normalized
+
+    chunk = normalized[:max_len]
+    for sep in "，。！？、；：,.!?;:":
+        idx = chunk.rfind(sep)
+        if idx >= max(4, max_len // 2):
+            return chunk[:idx].rstrip(sep)
+
+    return chunk
+
+
+def compress_xhs_image_headline(title: str, *, max_len: int = XHS_IMAGE_HEADLINE_MAX) -> str:
+    text = re.sub(r"【.*?】", "", (title or "").strip())
+    if len(text) <= max_len:
+        return text
+
+    if "，" in text:
+        hook, rest = text.split("，", 1)
+        num_phrase = re.search(r"\d+个[^，。！？!?]{2,12}", rest)
+        if num_phrase:
+            phrase = re.sub(r"让[^，。！？!?]{1,8}的", "", num_phrase.group(0))
+            phrase = phrase.replace("变长", "").strip()
+            candidate = f"{hook}，{phrase}" if phrase else hook
+            if len(candidate) <= max_len:
+                return candidate
+        if len(hook) <= max_len:
+            return hook
+        return truncate_xhs_copy(rest, max_len)
+
+    shortened = re.sub(r"让[^，。！？!?]{1,8}的", "的", text)
+    if len(shortened) <= max_len:
+        return shortened
+    return truncate_xhs_copy(text, max_len)
+
+
+def summarize_xhs_image_subheadline(body: str, *, max_len: int = XHS_IMAGE_SUBHEADLINE_MAX) -> str:
+    sections = split_body_sections(body)
+    if not sections:
+        return ""
+
+    first = re.sub(r"\s+", "", sections[0])
+    sentences = [s.strip() for s in re.split(r"(?<=[。！？!?])", first) if s.strip()]
+    sentence = sentences[0] if sentences else first
+    sentence = sentence.rstrip("。！？!?")
+    if len(sentence) <= max_len:
+        return sentence
+
+    if "，" in sentence:
+        clause = sentence.split("，", 1)[0]
+        if 4 <= len(clause) <= max_len:
+            return clause
+
+    return truncate_xhs_copy(sentence, max_len)
+
+
+def summarize_xhs_single_page_body(title: str, body: str, *, max_len: int = XHS_IMAGE_SINGLE_BODY_MAX) -> str:
+    points = extract_xiaohongshu_point_sections(body)
+    labels: list[str] = []
+    for point in points[:3]:
+        line = point.split("\n", 1)[0].strip("·-—【】 ")
+        line = re.sub(r"^【要点[一二三四五六七八九十\d]*】", "", line).strip()
+        if line:
+            labels.append(line[:8])
+
+    if not labels:
+        for section in split_body_sections(body)[1:4]:
+            line = section.split("\n", 1)[0].strip("·-—【】 ")
+            line = re.sub(r"^【要点[一二三四五六七八九十\d]*】", "", line).strip()
+            if line:
+                labels.append(line[:8])
+
+    if labels:
+        return truncate_xhs_copy(" · ".join(labels), max_len)
+
+    sections = split_body_sections(body)
+    if len(sections) >= 2:
+        return truncate_xhs_copy(sections[1], max_len)
+
+    return summarize_xhs_image_subheadline(body, max_len=max_len)
+
+
+def summarize_xhs_single_page_copy(title: str, body: str) -> dict[str, str]:
+    return {
+        "headline": compress_xhs_image_headline(title),
+        "subheadline": summarize_xhs_image_subheadline(body),
+        "body_text": summarize_xhs_single_page_body(title, body),
+    }
+
+
+def refine_xhs_page_copy(
+    page: dict,
+    *,
+    title: str,
+    body: str,
+    single_page: bool,
+) -> dict:
+    role = str(page.get("role") or "content")
+    refined = dict(page)
+
+    if single_page and role == "cover":
+        refined.update(summarize_xhs_single_page_copy(title, body))
+        return refined
+
+    if role == "cover":
+        refined["headline"] = compress_xhs_image_headline(str(page.get("headline") or title))
+        raw_sub = str(page.get("subheadline") or "").strip()
+        refined["subheadline"] = summarize_xhs_image_subheadline(raw_sub or body)
+        refined["body_text"] = ""
+        return refined
+
+    if role == "content":
+        headline = str(page.get("headline") or "").strip("·-—【】 ")
+        if not headline or len(headline) > XHS_IMAGE_HEADLINE_MAX or headline in body[:80]:
+            section = str(page.get("body_text") or headline or "")
+            headline = section.split("\n", 1)[0].strip("·-—【】 ")
+            headline = re.sub(r"^【要点[一二三四五六七八九十\d]*】", "", headline).strip()
+        refined["headline"] = truncate_xhs_copy(headline, XHS_IMAGE_HEADLINE_MAX) or f"要点{page.get('page', 1)}"
+        refined["body_text"] = truncate_xhs_copy(str(page.get("body_text") or ""), 40)
+        refined["subheadline"] = ""
+        return refined
+
+    refined["headline"] = truncate_xhs_copy(str(page.get("headline") or ""), XHS_IMAGE_HEADLINE_MAX)
+    refined["subheadline"] = truncate_xhs_copy(str(page.get("subheadline") or ""), XHS_IMAGE_SUBHEADLINE_MAX)
+    refined["body_text"] = truncate_xhs_copy(str(page.get("body_text") or ""), 24)
+    return refined
+
+
+def refine_xhs_image_pages(
+    pages: list[dict],
+    *,
+    title: str,
+    body: str,
+) -> list[dict]:
+    single_page = len(pages) == 1
+    return [
+        refine_xhs_page_copy(page, title=title, body=body, single_page=single_page)
+        for page in pages
+    ]
 
 
 def split_body_sections(body: str) -> list[str]:
@@ -134,12 +281,20 @@ class XiaohongshuCoverStyle:
     best_for: str
     example_path: str = ""
 
-    def image_prompt(self, headline: str = "", subheadline: str = "", extra: str = "") -> str:
+    def image_prompt(
+        self,
+        headline: str = "",
+        subheadline: str = "",
+        extra: str = "",
+        body_text: str = "",
+    ) -> str:
         text_bits = []
         if headline:
-            text_bits.append(f'大字标题「{headline[:16]}」')
+            text_bits.append(f'大字标题「{headline[:XHS_IMAGE_HEADLINE_MAX]}」')
         if subheadline:
-            text_bits.append(f'副标题「{subheadline[:24]}」')
+            text_bits.append(f'副标题「{subheadline[:XHS_IMAGE_SUBHEADLINE_MAX]}」')
+        if body_text:
+            text_bits.append(f'要点小字「{body_text[:XHS_IMAGE_SINGLE_BODY_MAX]}」')
         text_part = "，".join(text_bits)
         base = (
             f"小红书笔记封面，3:4竖版，{self.label}风格。"
@@ -269,8 +424,10 @@ def build_xhs_page_prompt(
 ) -> str:
     if role == "cover" or page_index == 1:
         core = style.image_prompt(
-            headline=headline[:16],
-            subheadline=subheadline[:24],
+            headline=headline[:XHS_IMAGE_HEADLINE_MAX],
+            subheadline=subheadline[:XHS_IMAGE_SUBHEADLINE_MAX],
+            body_text=body_text[:XHS_IMAGE_SINGLE_BODY_MAX] if total_pages == 1 else "",
+            extra="单图笔记，信息集中在一页" if total_pages == 1 else "",
         )
     else:
         core = content_page_prompt(
@@ -339,11 +496,12 @@ def content_page_prompt(
     style: XiaohongshuCoverStyle | None = None,
 ) -> str:
     style = style or _fallback_style()
-    detail = body_text[:80].replace("\n", " ") if body_text else ""
+    detail = truncate_xhs_copy(body_text.replace("\n", " "), 40) if body_text else ""
+    headline_text = truncate_xhs_copy(headline, XHS_IMAGE_HEADLINE_MAX)
     return (
         f"小红书笔记内页第{page_index}张，3:4竖版，延续「{style.label}」系列风格。"
         f"视觉语言：{style.visual_prompt}。"
-        f"简洁背景，突出文字「{headline[:20]}」"
+        f"简洁背景，突出文字「{headline_text}」"
         f"{f'，要点：{detail}' if detail else ''}。"
         "排版清爽、留白充足、真实自然，不要明显 AI 感。"
     )[:900]

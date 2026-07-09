@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
+from app.models.schemas import TrendAnalysisRequest
 from app.services import trends_service as mod
 from app.models.schemas import TrendItem
 from app.services.trends_service import TrendsService, _strip_html
@@ -22,6 +24,52 @@ def test_get_board_uses_cache() -> None:
     board = service.get_board(force_refresh=False)
     assert board.cache_hit is True
     assert len(board.items) >= 1
+
+
+def test_get_board_invalidates_stale_day_cache() -> None:
+    service = TrendsService()
+    sample = service._fallback_items()
+    stale_at = mod._now() - timedelta(days=1)
+    mod._cache["items"] = sample
+    mod._cache["fetched_at"] = stale_at
+    mod._cache["sources"] = ["fallback"]
+
+    with patch.object(service, "_fetch_bilibili_hotwords", side_effect=RuntimeError("offline")):
+        with patch.object(service, "_fetch_bilibili_popular", side_effect=RuntimeError("offline")):
+            with patch.object(service, "_fetch_douyin_hot", side_effect=RuntimeError("offline")):
+                with patch.object(service, "_fetch_douyin_popular", side_effect=RuntimeError("offline")):
+                    with patch.object(service, "_fetch_wechat_hot", side_effect=RuntimeError("offline")):
+                        with patch.object(service, "_fetch_wechat_search", side_effect=RuntimeError("offline")):
+                            with patch.object(service, "_fetch_weibo_hot", side_effect=RuntimeError("offline")):
+                                with patch.object(service, "_fetch_xiaohongshu_hot", side_effect=RuntimeError("offline")):
+                                    board = service.get_board(force_refresh=False)
+
+    assert board.cache_hit is False
+    assert board.fetched_at is not None
+    assert board.fetched_at > stale_at
+
+
+def test_analyze_uses_same_day_cache() -> None:
+    import asyncio
+
+    service = TrendsService()
+    payload = TrendAnalysisRequest(
+        title="测试热点",
+        source="微博热搜",
+        platform="weibo_hot",
+    )
+    cached = mod.TrendAnalysis(
+        why_hot="缓存内容",
+        account_angle="缓存角度",
+        topic_ideas=["选题 1"],
+    )
+    mod._analyze_cache[mod._analyze_cache_key(payload)] = (mod._now(), cached)
+
+    with patch.object(service, "fetch_related") as mock_related:
+        result = asyncio.run(service.analyze(payload))
+
+    assert result.why_hot == "缓存内容"
+    mock_related.assert_not_called()
 
 
 def test_rule_wechat_picks_filters_negative() -> None:

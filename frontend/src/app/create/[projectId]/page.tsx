@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ContentEditor, type EditorTab } from "@/components/studio/ContentEditor";
-import { ChatComposer } from "@/components/studio/ChatComposer";
+import { ChatComposer, type ChatScope } from "@/components/studio/ChatComposer";
 import { ChatMessageList } from "@/components/studio/ChatMessageList";
 import { ChatSummaryExpandable } from "@/components/studio/ChatSummaryExpandable";
 import { CascadeBanner } from "@/components/studio/CascadeBanner";
@@ -13,6 +13,8 @@ import { QuickCommandsPopover } from "@/components/studio/QuickCommandsPopover";
 import { StudioHeaderActions } from "@/components/studio/StudioHeaderActions";
 import { StudioMobileTabs } from "@/components/studio/StudioMobileTabs";
 import { StudioTitleEditor } from "@/components/studio/StudioTitleEditor";
+import { CategoryPicker } from "@/components/content/CategoryPicker";
+import { useContentCategories } from "@/hooks/useContentCategories";
 import {
   PreviewPanel,
   getPlatformCopyText,
@@ -112,6 +114,8 @@ export default function CreateStudioPage() {
   const [generatingXhsCarousel, setGeneratingXhsCarousel] = useState(false);
   const [actionInfo, setActionInfo] = useState("");
   const [autoDraftPending, setAutoDraftPending] = useState(false);
+  const { categories } = useContentCategories();
+  const [chatScope, setChatScope] = useState<ChatScope>("auto");
 
   const selectEditorTab = useCallback((tab: EditorTab) => {
     setEditorTab(tab);
@@ -184,7 +188,18 @@ export default function CreateStudioPage() {
     };
 
     const signal = beginAbortableRequest();
-    const chatPlatform = getChatContextPlatform(editorTab, current);
+    const chatPlatform =
+      chatScope === "auto"
+        ? getChatContextPlatform(editorTab, current)
+        : chatScope === "all"
+          ? "wechat"
+          : chatScope;
+    const scopeTargets =
+      chatScope === "all"
+        ? (["wechat", "xiaohongshu", "douyin"] as Platform[])
+        : chatScope !== "auto"
+          ? [chatScope]
+          : options?.target_platforms;
 
     setProject({ ...current, chat_history: [...historyBefore, optimisticUser] });
     setChatMessage("");
@@ -205,6 +220,7 @@ export default function CreateStudioPage() {
         },
         {
           ...options,
+          ...(scopeTargets?.length ? { target_platforms: scopeTargets } : {}),
           ...(attachmentUrls.length ? { attachment_urls: attachmentUrls } : {}),
           signal,
         },
@@ -471,6 +487,16 @@ export default function CreateStudioPage() {
     }
   }
 
+  async function saveProjectCategory(content_pillar: string) {
+    if (!project) return;
+    try {
+      const updated = await api.updateProject(project.id, { content_pillar });
+      setProject(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "分类保存失败");
+    }
+  }
+
   async function exportDraftBundle() {
     if (!project) return;
     setExportingDraft(true);
@@ -535,7 +561,7 @@ export default function CreateStudioPage() {
 
   const chatPanel = (
     <section
-      className="custom-shadow notranslate flex h-full flex-col overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest"
+      className="custom-shadow notranslate flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest"
       translate="no"
     >
       <div className="flex items-center justify-between border-b border-outline-variant/10 bg-surface-container-low/30 px-4 py-3">
@@ -547,7 +573,7 @@ export default function CreateStudioPage() {
       {hasDraft(project) && (
         <DraftReadyPanel sending={sending} onGenerate={(t) => void generatePlatform(t)} />
       )}
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {project.chat_summary && (
           <div className="shrink-0 px-4 pt-4">
             <ChatSummaryExpandable summary={project.chat_summary} />
@@ -570,6 +596,8 @@ export default function CreateStudioPage() {
           onMessageChange={setChatMessage}
           sending={sending}
           pendingAttachments={pendingAttachments}
+          chatScope={chatScope}
+          onChatScopeChange={setChatScope}
           onSend={(text) => sendChat(text)}
           onUploadAsset={(file) => void handleChatAssetUpload(file)}
           onRemoveAttachment={(url) =>
@@ -696,7 +724,7 @@ export default function CreateStudioPage() {
                 )}
                 <button
                   type="button"
-                  onClick={() => sendChat("给我 10 个标题")}
+                  onClick={() => sendChat("给我 20 个标题")}
                   disabled={sending}
                   className="text-xs text-primary underline disabled:opacity-50"
                 >
@@ -709,7 +737,7 @@ export default function CreateStudioPage() {
             </p>
             {project.titles.length === 0 ? (
               <p className="mt-3 text-sm leading-relaxed text-on-surface-variant">
-                尚未生成标题备选。点击「生成标题」，或在 AI 协作中发送「给我 10 个标题」。
+                尚未生成标题备选。点击「生成标题」，或在 AI 协作中发送「给我 20 个标题」。
               </p>
             ) : (
               <div className="mt-3 space-y-2">
@@ -890,9 +918,18 @@ export default function CreateStudioPage() {
           </button>
           <div className="min-w-0">
             <StudioTitleEditor title={project.title} onSave={saveProjectTitle} />
-            <p className="truncate text-xs text-on-surface-variant">
-              {project.inspiration.slice(0, 60)}
-            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <CategoryPicker
+                categories={categories}
+                value={project.content_pillar ?? ""}
+                onChange={(name) => void saveProjectCategory(name)}
+                size="sm"
+                showHint
+              />
+              <p className="truncate text-xs text-on-surface-variant">
+                {project.inspiration.slice(0, 60)}
+              </p>
+            </div>
           </div>
         </div>
         <StudioHeaderActions

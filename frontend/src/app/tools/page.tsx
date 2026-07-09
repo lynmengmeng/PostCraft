@@ -4,10 +4,17 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useShell } from "@/components/layout/AppShell";
 import { Icon } from "@/components/ui/Icon";
+import { TrendAnalysisPanel } from "@/components/tools/TrendAnalysisPanel";
 import { LoadError } from "@/components/ui/LoadError";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
-import { api, platformLabels } from "@/lib/api";
-import type { Platform, TrendAnalysis, TrendItem, TrendSource, WechatInspirationPick } from "@/lib/types";
+import { api } from "@/lib/api";
+import {
+  analysisFromPick,
+  buildTrendSnapshot,
+  inspirationPreviewFromSnapshot,
+  snapshotFromPick,
+} from "@/lib/trend-snapshot";
+import type { TrendAnalysis, TrendItem, TrendSource, WechatInspirationPick } from "@/lib/types";
 
 type SourceFilter = "all" | TrendSource;
 
@@ -111,20 +118,39 @@ export default function ToolsPage() {
         url: pick.url,
         summary: pick.angle,
       } satisfies TrendItem);
-    setSelected(item);
-    setAnalysis({
-      why_hot: `热度 ${pick.heat}，来源 ${pick.source_label}。`,
-      account_angle: pick.angle,
-      topic_ideas: [pick.article_title],
-      platform_tips: {
-        wechat: "优先用推荐标题发搜索型长文，单篇只讲一个可执行问题。",
-        xiaohongshu: "",
-        douyin: "",
-      },
-      caution: "",
-      related: [],
+    await handleSelect(item);
+  }
+
+  async function resolveAnalysisForPick(pick: WechatInspirationPick): Promise<TrendAnalysis> {
+    if (selected?.id === pick.trend_id && analysis) {
+      return analysis;
+    }
+    try {
+      return await api.analyzeTrend({
+        title: pick.title,
+        source: pick.source_label,
+        summary: pick.angle,
+        platform: pick.source,
+      });
+    } catch {
+      return analysisFromPick(pick);
+    }
+  }
+
+  async function saveTrendToInspiration(payload: {
+    title: string;
+    snapshot: ReturnType<typeof buildTrendSnapshot>;
+    sourceUrl?: string;
+  }) {
+    const inspiration = inspirationPreviewFromSnapshot(payload.snapshot);
+    await api.trendToInspiration({
+      title: payload.title,
+      inspiration,
+      content_pillar: "热点观察",
+      source_url: payload.sourceUrl ?? payload.snapshot.url,
+      trend_id: payload.snapshot.trend_id,
+      trend_snapshot: payload.snapshot,
     });
-    setAnalyzing(false);
   }
 
   async function startWritingFromPick(pick: WechatInspirationPick) {
@@ -161,21 +187,12 @@ export default function ToolsPage() {
     setBusyAction(actionKey);
     setActionMsgError("");
     try {
-      const inspiration = [
-        `【公众号灵感推荐】${pick.article_title}`,
-        `原热点：${pick.title}`,
-        `来源：${pick.source_label} · 热度 ${pick.heat}`,
-        pick.angle ? `写作角度：${pick.angle}` : "",
-        pick.url ? `链接：${pick.url}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
-      await api.trendToInspiration({
+      const resolvedAnalysis = await resolveAnalysisForPick(pick);
+      const snapshot = snapshotFromPick(pick, resolvedAnalysis);
+      await saveTrendToInspiration({
         title: pick.article_title,
-        inspiration,
-        content_pillar: "热点观察",
-        source_url: pick.url,
-        trend_id: pick.trend_id,
+        snapshot,
+        sourceUrl: pick.url,
       });
       setSavedPickIds((prev) => new Set(prev).add(pick.trend_id));
       setData((prev) =>
@@ -204,21 +221,12 @@ export default function ToolsPage() {
       let saved = 0;
       for (const pick of picks) {
         if (savedTrendIds.has(pick.trend_id)) continue;
-        const inspiration = [
-          `【公众号灵感推荐】${pick.article_title}`,
-          `原热点：${pick.title}`,
-          `来源：${pick.source_label} · 热度 ${pick.heat}`,
-          pick.angle ? `写作角度：${pick.angle}` : "",
-          pick.url ? `链接：${pick.url}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n");
-        await api.trendToInspiration({
+        const resolvedAnalysis = analysisFromPick(pick);
+        const snapshot = snapshotFromPick(pick, resolvedAnalysis);
+        await saveTrendToInspiration({
           title: pick.article_title,
-          inspiration,
-          content_pillar: "热点观察",
-          source_url: pick.url,
-          trend_id: pick.trend_id,
+          snapshot,
+          sourceUrl: pick.url,
         });
         saved += 1;
       }
@@ -260,18 +268,26 @@ export default function ToolsPage() {
     setBusyAction("topic");
     setActionMsgError("");
     try {
+      if (!analysis) {
+        setActionMsgError("请等待热点分析完成后再存选题");
+        return;
+      }
       const title = idea || item.title;
-      const inspiration = [
-        `热点来源：${item.source_label}`,
-        item.summary,
-        analysis?.account_angle ? `角度：${analysis.account_angle}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
+      const snapshot = buildTrendSnapshot(item, analysis);
+      if (idea) {
+        snapshot.analysis = {
+          ...analysis,
+          topic_ideas: [idea, ...analysis.topic_ideas.filter((row) => row !== idea)].slice(0, 5),
+        };
+      }
+      const inspiration = inspirationPreviewFromSnapshot(snapshot);
       await api.trendToTopic({
         title,
         inspiration,
         content_pillar: "热点观察",
+        trend_id: item.id,
+        source_url: item.url,
+        trend_snapshot: snapshot,
       });
       setActionMsg("已存入选题库");
       setTimeout(() => setActionMsg(""), 2500);
@@ -286,17 +302,15 @@ export default function ToolsPage() {
     setBusyAction("inspiration");
     setActionMsgError("");
     try {
-      const inspiration = [
-        `【${item.source_label}】${item.title}`,
-        item.summary,
-        item.url ? `链接：${item.url}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
-      await api.trendToInspiration({
+      if (!analysis) {
+        setActionMsgError("请等待热点分析完成后再收藏");
+        return;
+      }
+      const snapshot = buildTrendSnapshot(item, analysis);
+      await saveTrendToInspiration({
         title: item.title,
-        inspiration,
-        content_pillar: "热点观察",
+        snapshot,
+        sourceUrl: item.url,
       });
       setActionMsg("已存入灵感库");
       setTimeout(() => setActionMsg(""), 2500);
@@ -334,12 +348,16 @@ export default function ToolsPage() {
   }
 
   if (loading) {
-    return <p className="p-8 text-sm text-on-surface-variant/50">加载热点...</p>;
+    return (
+      <div className="flex flex-1 items-center justify-center p-8">
+        <p className="text-sm text-on-surface-variant/50">加载热点...</p>
+      </div>
+    );
   }
 
   if (error) {
     return (
-      <div className="space-y-4 p-8">
+      <div className="custom-scrollbar flex-1 space-y-4 overflow-y-auto p-8">
         <h1 className="font-headline text-2xl font-semibold">热点工具</h1>
         <LoadError message={error} onRetry={() => void reload()} />
       </div>
@@ -347,8 +365,9 @@ export default function ToolsPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-      <div className="min-w-0 flex-1 space-y-6 p-6 lg:p-8">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+      <div className="custom-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto">
+        <div className="space-y-6 p-6 lg:p-8">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="font-headline text-2xl font-semibold">热点工具</h1>
@@ -357,7 +376,7 @@ export default function ToolsPage() {
             </p>
             <p className="mt-2 text-xs text-on-surface-variant/70">
               更新于 {formatFetchedAt(data?.fetched_at)}
-              {data?.cache_hit ? " · 缓存" : " · 刚刚拉取"}
+              {data?.cache_hit ? " · 今日缓存" : " · 刚刚拉取"}
               {data?.sources?.length ? ` · 来源：${data.sources.join("、")}` : ""}
             </p>
           </div>
@@ -468,21 +487,23 @@ export default function ToolsPage() {
           </section>
         )}
 
-        <div className="flex flex-wrap gap-2">
-          {sourceFilters.map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              onClick={() => setSourceFilter(f.key)}
-              className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                sourceFilter === f.key
-                  ? "bg-primary text-on-primary"
-                  : "bg-surface-container text-on-surface-variant hover:bg-outline-variant/20"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
+        <div className="sticky top-0 z-10 -mx-6 border-b border-outline-variant/20 bg-background/95 px-6 py-3 backdrop-blur-md lg:-mx-8 lg:px-8">
+          <div className="flex flex-wrap gap-2">
+            {sourceFilters.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setSourceFilter(f.key)}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                  sourceFilter === f.key
+                    ? "bg-primary text-on-primary"
+                    : "bg-surface-container text-on-surface-variant hover:bg-outline-variant/20"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="overflow-hidden rounded-2xl border border-outline-variant/30 bg-surface-container-lowest">
@@ -552,10 +573,11 @@ export default function ToolsPage() {
           )}
         </div>
       </div>
+      </div>
 
-      <aside className="w-full shrink-0 border-t border-outline-variant/30 bg-surface-container-low lg:w-[380px] lg:border-l lg:border-t-0">
+      <aside className="flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-t border-outline-variant/30 bg-surface-container-low lg:w-[400px] lg:border-l lg:border-t-0">
         {!selected ? (
-          <div className="flex h-full min-h-[240px] flex-col items-center justify-center p-8 text-center">
+          <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
             <Icon name="insights" className="mb-3 text-4xl text-on-surface-variant/30" />
             <p className="text-sm font-medium text-on-surface">选择一条热点</p>
             <p className="mt-1 text-xs text-on-surface-variant">
@@ -563,8 +585,8 @@ export default function ToolsPage() {
             </p>
           </div>
         ) : (
-          <div className="flex max-h-[calc(100vh-4rem)] flex-col overflow-y-auto p-5">
-            <div className="mb-4">
+          <>
+            <div className="shrink-0 border-b border-outline-variant/20 p-5">
               <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase text-primary">
                 {selected.source_label}
               </span>
@@ -572,130 +594,48 @@ export default function ToolsPage() {
               {selected.summary && (
                 <p className="mt-2 text-xs leading-relaxed text-on-surface-variant">{selected.summary}</p>
               )}
-            </div>
 
-            <div className="mb-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={busyAction !== null}
-                onClick={() => void startWriting(selected)}
-                className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl bg-primary px-3 py-2 text-xs font-medium text-on-primary disabled:opacity-50"
-              >
-                <Icon name="edit_note" className="text-sm" />
-                一键开写
-              </button>
-              <button
-                type="button"
-                disabled={busyAction !== null}
-                onClick={() => void saveToTopic(selected)}
-                className="rounded-xl border border-outline-variant/30 px-3 py-2 text-xs disabled:opacity-50"
-              >
-                存选题
-              </button>
-              <button
-                type="button"
-                disabled={busyAction !== null}
-                onClick={() => void saveToInspiration(selected)}
-                className="rounded-xl border border-outline-variant/30 px-3 py-2 text-xs disabled:opacity-50"
-              >
-                存灵感
-              </button>
-            </div>
-
-            {analyzing ? (
-              <p className="text-sm text-on-surface-variant/60">正在分析经营角度...</p>
-            ) : analysis ? (
-              <div className="space-y-4 text-sm">
-                <section>
-                  <h3 className="mb-1 text-xs font-bold uppercase tracking-wide text-on-surface-variant">
-                    为什么有流量
-                  </h3>
-                  <p className="leading-relaxed text-on-surface">{analysis.why_hot}</p>
-                </section>
-                <section>
-                  <h3 className="mb-1 text-xs font-bold uppercase tracking-wide text-on-surface-variant">
-                    新号怎么跟
-                  </h3>
-                  <p className="leading-relaxed text-on-surface">{analysis.account_angle}</p>
-                </section>
-                {analysis.topic_ideas.length > 0 && (
-                  <section>
-                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-on-surface-variant">
-                      可写选题
-                    </h3>
-                    <ul className="space-y-2">
-                      {analysis.topic_ideas.map((idea) => (
-                        <li
-                          key={idea}
-                          className="rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-3"
-                        >
-                          <p className="text-xs leading-relaxed">{idea}</p>
-                          <button
-                            type="button"
-                            disabled={busyAction !== null}
-                            onClick={() => void startWriting(selected, idea)}
-                            className="mt-2 text-[11px] font-medium text-primary hover:underline disabled:opacity-50"
-                          >
-                            用这个选题开写 →
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
-                {Object.keys(analysis.platform_tips).length > 0 && (
-                  <section>
-                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-on-surface-variant">
-                      分平台建议
-                    </h3>
-                    <ul className="space-y-2">
-                      {(Object.keys(platformLabels) as Platform[]).map((key) => {
-                        const tip = analysis.platform_tips[key];
-                        if (!tip) return null;
-                        return (
-                          <li key={key} className="rounded-lg bg-surface-container/60 px-3 py-2 text-xs">
-                            <span className="font-medium">{platformLabels[key]}：</span>
-                            {tip}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </section>
-                )}
-                {analysis.related.length > 0 && (
-                  <section>
-                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-on-surface-variant">
-                      关联高流量内容
-                    </h3>
-                    <ul className="space-y-2">
-                      {analysis.related.map((rel) => (
-                        <li key={rel.url || rel.title} className="rounded-lg border border-outline-variant/20 p-2">
-                          {rel.url ? (
-                            <a
-                              href={rel.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs font-medium text-primary hover:underline"
-                            >
-                              {rel.title}
-                            </a>
-                          ) : (
-                            <p className="text-xs font-medium">{rel.title}</p>
-                          )}
-                          {rel.metrics && (
-                            <p className="mt-0.5 text-[10px] text-on-surface-variant">{rel.metrics}</p>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
-                {analysis.caution && (
-                  <p className="text-[11px] text-on-surface-variant/70">{analysis.caution}</p>
-                )}
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={() => void startWriting(selected)}
+                  className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl bg-primary px-3 py-2 text-xs font-medium text-on-primary disabled:opacity-50"
+                >
+                  <Icon name="edit_note" className="text-sm" />
+                  一键开写
+                </button>
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={() => void saveToTopic(selected)}
+                  className="rounded-xl border border-outline-variant/30 px-3 py-2 text-xs disabled:opacity-50"
+                >
+                  存选题
+                </button>
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={() => void saveToInspiration(selected)}
+                  className="rounded-xl border border-outline-variant/30 px-3 py-2 text-xs disabled:opacity-50"
+                >
+                  存灵感
+                </button>
               </div>
-            ) : null}
-          </div>
+            </div>
+
+            <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-5">
+              {analyzing ? (
+                <p className="text-sm text-on-surface-variant/60">正在分析经营角度...</p>
+              ) : analysis ? (
+                <TrendAnalysisPanel
+                  analysis={analysis}
+                  busyAction={busyAction}
+                  onWriteWithIdea={(idea) => void startWriting(selected, idea)}
+                />
+              ) : null}
+            </div>
+          </>
         )}
       </aside>
     </div>

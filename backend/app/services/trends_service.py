@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -53,7 +53,32 @@ _cache: dict[str, Any] = {
     "tophub_html": None,
     "wechat_picks": [],
 }
-_CACHE_TTL = timedelta(minutes=45)
+_analyze_cache: dict[str, tuple[datetime, TrendAnalysis]] = {}
+# 按北京时间（UTC+8）自然日判定「当天缓存」
+_CACHE_TZ = timezone(timedelta(hours=8))
+
+
+def _cache_day(dt: datetime) -> date:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_CACHE_TZ).date()
+
+
+def _is_same_day_cache(fetched_at: datetime | None) -> bool:
+    if fetched_at is None:
+        return False
+    return _cache_day(fetched_at) == _cache_day(_now())
+
+
+def _analyze_cache_key(payload: TrendAnalysisRequest) -> str:
+    raw = "|".join(
+        [
+            payload.platform.strip(),
+            payload.title.strip(),
+            payload.source.strip(),
+        ]
+    )
+    return hashlib.sha1(raw.encode()).hexdigest()
 
 _WECHAT_SOURCE_BOOST: dict[str, float] = {
     "wechat_hot": 28,
@@ -131,8 +156,7 @@ class TrendsService:
         fetched_at = _cache.get("fetched_at")
         cache_hit = (
             not force_refresh
-            and fetched_at is not None
-            and _now() - fetched_at < _CACHE_TTL
+            and _is_same_day_cache(fetched_at)
             and _cache.get("items")
         )
         if cache_hit:
@@ -146,6 +170,7 @@ class TrendsService:
 
         if force_refresh:
             _cache["tophub_html"] = None
+            _analyze_cache.clear()
 
         items: list[TrendItem] = []
         sources: list[str] = []
@@ -366,6 +391,21 @@ class TrendsService:
             picks.append(pick)
         return picks[:limit]
 
+    def _append_related_safe(
+        self,
+        items: list[TrendRelatedItem],
+        fetcher: Any,
+        *,
+        limit: int,
+        label: str,
+    ) -> None:
+        if limit <= 0:
+            return
+        try:
+            items.extend(fetcher()[:limit])
+        except Exception as exc:
+            logger.warning("Related fetch %s failed: %s", label, exc)
+
     def fetch_related(self, keyword: str, *, platform: str = "", limit: int = 6) -> list[TrendRelatedItem]:
         keyword = keyword.strip()
         if not keyword:
@@ -375,15 +415,35 @@ class TrendsService:
         platform = platform or ""
 
         if platform.startswith("douyin"):
-            items.extend(self._search_douyin_related(keyword, limit=min(3, limit)))
+            self._append_related_safe(
+                items,
+                lambda: self._search_douyin_related(keyword, limit=min(3, limit)),
+                limit=min(3, limit),
+                label="douyin",
+            )
         if platform.startswith("wechat"):
-            items.extend(self._search_wechat_related(keyword, limit=min(3, limit)))
+            self._append_related_safe(
+                items,
+                lambda: self._search_wechat_related(keyword, limit=min(3, limit)),
+                limit=min(3, limit),
+                label="wechat",
+            )
         if platform.startswith("weibo") or platform.startswith("xiaohongshu"):
-            items.extend(self._search_weibo_related(keyword, limit=min(3, limit)))
+            self._append_related_safe(
+                items,
+                lambda: self._search_weibo_related(keyword, limit=min(3, limit)),
+                limit=min(3, limit),
+                label="weibo",
+            )
 
         remaining = limit - len(items)
         if remaining > 0:
-            items.extend(self._search_bilibili(keyword, limit=remaining))
+            self._append_related_safe(
+                items,
+                lambda: self._search_bilibili(keyword, limit=remaining),
+                limit=remaining,
+                label="bilibili",
+            )
 
         deduped: list[TrendRelatedItem] = []
         seen: set[str] = set()
@@ -402,13 +462,20 @@ class TrendsService:
         if not title:
             raise ValueError("标题不能为空")
 
+        cache_key = _analyze_cache_key(payload)
+        cached = _analyze_cache.get(cache_key)
+        if cached and _is_same_day_cache(cached[0]):
+            return cached[1].model_copy(deep=True)
+
         related = self.fetch_related(title, platform=payload.platform, limit=4)
         related_block = "\n".join(
             f"- {item.title} ({item.metrics or item.source})" for item in related
         ) or "- 暂无关联内容"
 
         if not self.llm.status().configured:
-            return self._mock_analysis(title, payload.source, related, payload.platform)
+            result = self._mock_analysis(title, payload.source, related, payload.platform)
+            _analyze_cache[cache_key] = (_now(), result)
+            return result
 
         platform_hint = payload.platform or payload.source or "未知"
         system = (
@@ -427,11 +494,26 @@ class TrendsService:
             "给出 3 个可写选题（搜索型标题）、各平台怎么发。"
             "语气务实，不要震惊体，不要建议蹭无关灾难/明星八卦。"
         )
-        raw = await self.llm.complete(system, user, json_mode=True, temperature=0.5)
-        data = parse_json_from_text(raw)
+        try:
+            raw = await self.llm.complete(system, user, json_mode=True, temperature=0.5)
+            try:
+                data = parse_json_from_text(raw)
+            except ValueError as exc:
+                logger.warning("Trend analyze JSON parse failed: %s", exc)
+                result = self._mock_analysis(title, payload.source, related, payload.platform)
+                result.caution = "AI 返回格式异常，已改用模板分析。可稍后重试。"
+                _analyze_cache[cache_key] = (_now(), result)
+                return result
+        except Exception as exc:
+            logger.warning("Trend analyze LLM failed: %s", exc)
+            result = self._mock_analysis(title, payload.source, related, payload.platform)
+            result.caution = f"AI 分析暂不可用，已返回模板建议。（{type(exc).__name__}）"
+            _analyze_cache[cache_key] = (_now(), result)
+            return result
+
         ideas = data.get("topic_ideas") or []
         tips = data.get("platform_tips") or {}
-        return TrendAnalysis(
+        result = TrendAnalysis(
             why_hot=str(data.get("why_hot") or ""),
             account_angle=str(data.get("account_angle") or ""),
             topic_ideas=[str(x) for x in ideas if x][:5],
@@ -443,6 +525,8 @@ class TrendsService:
             caution=str(data.get("caution") or ""),
             related=related,
         )
+        _analyze_cache[cache_key] = (_now(), result)
+        return result
 
     def _http_client(self) -> httpx.Client:
         return httpx.Client(timeout=15.0, headers=BROWSER_HEADERS, follow_redirects=True)
@@ -783,7 +867,10 @@ class TrendsService:
                 headers=BILI_REFERER,
             )
             resp.raise_for_status()
-            payload = resp.json()
+            try:
+                payload = resp.json()
+            except ValueError:
+                return []
         if payload.get("code") != 0:
             return []
 

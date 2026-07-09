@@ -1,5 +1,6 @@
 import type {
   AuthorStyleProfile,
+  ContentCategory,
   ContentProject,
   Inspiration,
   InspirationStats,
@@ -11,6 +12,7 @@ import type {
   Topic,
   TopicStats,
   TrendAnalysis,
+  TrendInspirationSnapshot,
   TrendItem,
   TrendRelatedItem,
   TrendsBoard,
@@ -527,6 +529,7 @@ export const api = {
     trend_id?: string;
     cover_headline?: string;
     cover_subheadline?: string;
+    trend_snapshot?: TrendInspirationSnapshot;
   }) =>
     request<Topic>("/tools/trends/to-topic", {
       method: "POST",
@@ -538,6 +541,7 @@ export const api = {
     content_pillar?: string;
     source_url?: string;
     trend_id?: string;
+    trend_snapshot?: TrendInspirationSnapshot;
   }) =>
     request<Inspiration>("/tools/trends/to-inspiration", {
       method: "POST",
@@ -563,6 +567,20 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(profile),
     }),
+
+  listContentCategories: () =>
+    request<{ categories: ContentCategory[] }>("/content-categories"),
+  createContentCategory: (payload: {
+    name: string;
+    description?: string;
+    prompt_hint?: string;
+  }) =>
+    request<ContentCategory>("/content-categories", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  deleteContentCategory: (id: string) =>
+    request<{ ok: boolean }>(`/content-categories/${id}`, { method: "DELETE" }),
 
   uploadCover: async (projectId: string, file: File) => {
     const form = new FormData();
@@ -651,8 +669,36 @@ export const api = {
     return response.json() as Promise<ContentProject>;
   },
 
+  ensureXiaohongshuCarouselPlan: async (projectId: string) => {
+    let response: Response;
+    try {
+      response = await fetch(
+        `${API_BASE}/projects/${projectId}/xiaohongshu/carousel/generate?plan_only=true`,
+        {
+          method: "POST",
+          headers: authHeaders(),
+        },
+      );
+    } catch (error) {
+      throw new ApiError(formatApiError(error, API_BASE), {
+        cause: error,
+        isNetworkError: isNetworkFetchError(error),
+      });
+    }
+    if (response.status === 401) {
+      handleUnauthorized();
+    }
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Carousel plan failed: ${response.status}`);
+    }
+    return response.json() as Promise<ContentProject>;
+  },
+
   generateXiaohongshuCarousel: async (projectId: string, options?: { force?: boolean }) => {
-    const query = options?.force ? "?force=true" : "";
+    const params = new URLSearchParams();
+    if (options?.force) params.set("force", "true");
+    const query = params.toString() ? `?${params.toString()}` : "";
     let response: Response;
     try {
       response = await fetch(

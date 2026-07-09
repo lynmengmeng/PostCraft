@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ContentProject, DouyinScene, Platform } from "@/lib/types";
 import { platformLabels } from "@/lib/api";
 import { resolveImageUrl } from "@/lib/export";
@@ -97,45 +97,92 @@ export function XiaohongshuPreview({
   const carousel = (content.carousel_images || []).filter(Boolean);
   const images = carousel.length > 0 ? carousel : content.cover_image ? [content.cover_image] : [];
   const [activeIndex, setActiveIndex] = useState(0);
-  const cover = images[activeIndex] ? resolveImageUrl(images[activeIndex]) : "";
+  const scrollerRef = useRef<HTMLDivElement>(null);
+
+  const scrollToIndex = useCallback((index: number) => {
+    const node = scrollerRef.current;
+    if (!node) return;
+    const width = node.clientWidth;
+    node.scrollTo({ left: width * index, behavior: "smooth" });
+    setActiveIndex(index);
+  }, []);
+
+  useEffect(() => {
+    setActiveIndex(0);
+    scrollerRef.current?.scrollTo({ left: 0 });
+  }, [images.join("|")]);
+
+  function handleScroll() {
+    const node = scrollerRef.current;
+    if (!node || node.clientWidth <= 0) return;
+    const index = Math.round(node.scrollLeft / node.clientWidth);
+    if (index !== activeIndex && index >= 0 && index < images.length) {
+      setActiveIndex(index);
+    }
+  }
 
   return (
     <div className="xhs-preview mx-auto max-w-[360px] overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm">
-      <div
-        className="relative aspect-[3/4] overflow-hidden bg-gradient-to-br from-rose-50 to-orange-100"
-        style={
-          cover
-            ? {
-                backgroundImage: `url(${cover})`,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-              }
-            : undefined
-        }
-      >
-        {!cover && (
+      <div className="relative aspect-[3/4] overflow-hidden bg-gradient-to-br from-rose-50 to-orange-100">
+        {images.length > 0 ? (
+          <div
+            ref={scrollerRef}
+            onScroll={handleScroll}
+            className="flex h-full w-full snap-x snap-mandatory overflow-x-auto scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            {images.map((image, index) => (
+              <div
+                key={`${image}-${index}`}
+                className="relative h-full w-full shrink-0 snap-center snap-always bg-stone-100"
+              >
+                <img
+                  src={resolveImageUrl(image)}
+                  alt={`${content.title || "笔记"} 第 ${index + 1} 张`}
+                  className="h-full w-full object-cover"
+                  draggable={false}
+                />
+              </div>
+            ))}
+          </div>
+        ) : (
           <div className="flex h-full flex-col justify-end bg-gradient-to-t from-black/40 to-transparent p-5">
             <div className="text-lg font-semibold leading-snug text-white drop-shadow">
               {content.title || "笔记标题"}
             </div>
           </div>
         )}
+
         {images.length > 1 && (
           <>
-            <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 gap-1.5">
+            <button
+              type="button"
+              aria-label="上一张"
+              disabled={activeIndex <= 0}
+              onClick={() => scrollToIndex(Math.max(0, activeIndex - 1))}
+              className="absolute left-2 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full bg-black/35 text-white backdrop-blur disabled:opacity-30"
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              aria-label="下一张"
+              disabled={activeIndex >= images.length - 1}
+              onClick={() => scrollToIndex(Math.min(images.length - 1, activeIndex + 1))}
+              className="absolute right-2 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full bg-black/35 text-white backdrop-blur disabled:opacity-30"
+            >
+              ›
+            </button>
+            <div className="pointer-events-none absolute bottom-3 left-1/2 flex -translate-x-1/2 gap-1.5">
               {images.map((_, index) => (
-                <button
+                <span
                   key={index}
-                  type="button"
-                  aria-label={`第 ${index + 1} 张`}
-                  onClick={() => setActiveIndex(index)}
                   className={`h-1.5 rounded-full transition-all ${
                     index === activeIndex ? "w-4 bg-white" : "w-1.5 bg-white/50"
                   }`}
                 />
               ))}
             </div>
-            <div className="absolute right-3 top-3 rounded-full bg-black/45 px-2 py-0.5 text-[11px] text-white">
+            <div className="pointer-events-none absolute right-3 top-3 rounded-full bg-black/45 px-2 py-0.5 text-[11px] text-white">
               {activeIndex + 1}/{images.length}
             </div>
           </>
@@ -148,7 +195,7 @@ export function XiaohongshuPreview({
         </div>
       )}
       <div className="px-4 py-4">
-        {cover && (
+        {images.length > 0 && (
           <h2 className="mb-3 text-[17px] font-bold leading-snug text-stone-900">
             {content.title || "笔记标题"}
           </h2>

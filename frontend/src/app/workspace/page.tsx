@@ -7,6 +7,7 @@ import { useShell } from "@/components/layout/AppShell";
 import { Icon } from "@/components/ui/Icon";
 import { LoadError } from "@/components/ui/LoadError";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
+import { useContentCategories } from "@/hooks/useContentCategories";
 import { api, statusLabels } from "@/lib/api";
 import type { ContentProject, ProjectDraftImportPayload, Topic } from "@/lib/types";
 
@@ -151,6 +152,7 @@ export default function HomePage() {
   const topics = boot?.topics ?? [];
   const trialMetrics = boot?.trialMetrics ?? null;
   const [inspiration, setInspiration] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("");
   const [quickInspiration, setQuickInspiration] = useState("");
   const [savingInspiration, setSavingInspiration] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -158,13 +160,19 @@ export default function HomePage() {
   const [actionError, setActionError] = useState("");
   const [actionInfo, setActionInfo] = useState("");
   const importDraftRef = useRef<HTMLInputElement>(null);
+  const { categories } = useContentCategories();
+
+  const activeCategory = categories.find((c) => c.name === selectedCategory);
 
   async function createFromInspiration() {
     if (!inspiration.trim()) return;
     setCreating(true);
     setActionError("");
     try {
-      const project = await api.createProject({ inspiration: inspiration.trim() });
+      const project = await api.createProject({
+        inspiration: inspiration.trim(),
+        content_pillar: selectedCategory,
+      });
       router.push(`/create/${project.id}`);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "创建失败");
@@ -294,6 +302,39 @@ export default function HomePage() {
                       : "未配置 API Key（将使用本地模板）"}
                   </span>
                 </div>
+              )}
+            </div>
+            <div className="space-y-3">
+              <p className="text-[13px] font-semibold text-on-surface-variant">选择内容栏目（可选）</p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedCategory("")}
+                  className={`rounded-full px-3 py-1.5 text-sm transition-colors ${
+                    !selectedCategory
+                      ? "bg-primary text-on-primary"
+                      : "bg-surface-container-lowest text-on-surface-variant ring-1 ring-outline-variant/30 hover:ring-primary/30"
+                  }`}
+                >
+                  不指定
+                </button>
+                {categories.map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setSelectedCategory(cat.name)}
+                    className={`rounded-full px-3 py-1.5 text-sm transition-colors ${
+                      selectedCategory === cat.name
+                        ? "bg-primary text-on-primary"
+                        : "bg-surface-container-lowest text-on-surface-variant ring-1 ring-outline-variant/30 hover:ring-primary/30"
+                    }`}
+                  >
+                    {cat.name}
+                  </button>
+                ))}
+              </div>
+              {activeCategory?.description && (
+                <p className="text-[13px] text-on-surface-variant/70">{activeCategory.description}</p>
               )}
             </div>
             <div className="flex flex-wrap gap-3">

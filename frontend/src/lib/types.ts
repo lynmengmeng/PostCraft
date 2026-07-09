@@ -169,6 +169,15 @@ export interface ContentProject {
   updated_at: string;
 }
 
+export interface TrendInspirationSnapshot {
+  trend_id: string;
+  title: string;
+  source_label: string;
+  summary: string;
+  url: string;
+  analysis: TrendAnalysis;
+}
+
 export interface Inspiration {
   id: string;
   content: string;
@@ -177,6 +186,7 @@ export interface Inspiration {
   image_url?: string;
   is_highlight?: boolean;
   tags: string[];
+  trend_snapshot?: TrendInspirationSnapshot | null;
   created_at: string;
 }
 
@@ -206,6 +216,7 @@ export interface Topic {
   priority: "soon" | "later";
   series: string;
   inspiration: string;
+  trend_snapshot?: TrendInspirationSnapshot | null;
   created_at: string;
   updated_at: string;
 }
@@ -215,6 +226,14 @@ export interface AuthorStyleProfile {
   banned_phrases: string[];
   personal_snippets: string[];
   platform_defaults: Record<string, string>;
+}
+
+export interface ContentCategory {
+  id: string;
+  name: string;
+  description: string;
+  prompt_hint: string;
+  builtin: boolean;
 }
 
 export type TrendSource =

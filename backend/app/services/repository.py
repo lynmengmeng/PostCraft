@@ -8,10 +8,13 @@ from typing import Any
 from app.config import Settings
 from app.models.schemas import (
     AuthorStyleProfile,
+    ContentCategory,
+    ContentCategoryCreate,
     ContentProject,
     ContentPatch,
     Inspiration,
     Topic,
+    new_id,
 )
 from app.db.database import (
     InspirationRow,
@@ -320,10 +323,165 @@ class StyleRepository:
         return profile
 
 
+BUILTIN_CONTENT_CATEGORIES: list[ContentCategory] = [
+    ContentCategory(
+        id="weekend-out",
+        name="周末出走计划",
+        description="武汉周边骑行、江边、露营、公园、短途路线",
+        prompt_hint="写一篇关于低成本周末出走的文章，可以是骑行、江边散步、露营或短途路线，重点写真实体验和放松感。",
+        builtin=True,
+    ),
+    ContentCategory(
+        id="budget-finds",
+        name="便宜但有用",
+        description="拼多多/淘宝好物推荐，真实体验与避坑",
+        prompt_hint="写一篇低成本生活好物推荐，要有真实使用体验，避免广告感，可以写避坑清单或提升幸福感的小物件。",
+        builtin=True,
+    ),
+    ContentCategory(
+        id="short-story",
+        name="一个小故事",
+        description="短故事 + 情绪观点，800–1500 字",
+        prompt_hint="写一篇有情绪共鸣的短故事，带一点生活观察或观点，标题要有情绪钩子，800–1500 字。",
+        builtin=True,
+    ),
+    ContentCategory(
+        id="road-music",
+        name="路上听什么",
+        description="场景化歌单：骑车、散步、露营、发呆",
+        prompt_hint="写一篇音乐分享，不要写成单纯推荐歌曲，要结合场景和情绪，比如骑车去江边、下班路上、下雨天、失眠夜。",
+        builtin=True,
+    ),
+    ContentCategory(
+        id="ordinary-observer",
+        name="普通人观察",
+        description="生活感想、热点延伸、消费观察",
+        prompt_hint="写一篇关于普通人生活的观察，可以是生活感想、消费观察，或从热点延伸到普通人的情绪困境。",
+        builtin=True,
+    ),
+]
+
+
+def resolve_prompt_hint(
+    pillar: str,
+    categories: list[ContentCategory] | None = None,
+) -> str:
+    """Resolve writing hint for a content pillar name."""
+    if not pillar.strip():
+        return ""
+    merged = list(BUILTIN_CONTENT_CATEGORIES)
+    if categories:
+        builtin_names = {c.name for c in BUILTIN_CONTENT_CATEGORIES}
+        for cat in categories:
+            if cat.name not in builtin_names:
+                merged.append(cat)
+    for cat in merged:
+        if cat.name == pillar.strip():
+            return cat.prompt_hint.strip()
+    return ""
+
+
+def sync_content_pillar(project: ContentProject, pillar: str) -> None:
+    """Keep project.content_pillar and topic_meta.content_pillar in sync."""
+    project.content_pillar = pillar
+    project.topic_meta.content_pillar = pillar
+
+
+class CategoryRepository:
+    SETTINGS_KEY = "content_categories"
+
+    def _key(self, user_id: str | None, scoped: bool) -> str:
+        if scoped and user_id:
+            return f"{self.SETTINGS_KEY}:{user_id}"
+        return self.SETTINGS_KEY
+
+    def _load_custom(self, db: Session, *, user_id: str | None = None, scoped: bool = False) -> list[ContentCategory]:
+        key = self._key(user_id, scoped)
+        row = db.get(SettingsRow, key)
+        if not row and scoped and user_id:
+            row = db.get(SettingsRow, self.SETTINGS_KEY)
+        if not row:
+            return []
+        raw = load_json(row.payload)
+        if not isinstance(raw, list):
+            return []
+        return [ContentCategory.model_validate(item) for item in raw]
+
+    def _save_custom(
+        self,
+        db: Session,
+        categories: list[ContentCategory],
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> None:
+        key = self._key(user_id, scoped)
+        payload = dump_json([c.model_dump(mode="json") for c in categories])
+        row = db.get(SettingsRow, key)
+        if row:
+            row.payload = payload
+        else:
+            db.add(SettingsRow(key=key, payload=payload))
+        db.commit()
+
+    def list_all(self, db: Session, *, user_id: str | None = None, scoped: bool = False) -> list[ContentCategory]:
+        custom = self._load_custom(db, user_id=user_id, scoped=scoped)
+        builtin_names = {c.name for c in BUILTIN_CONTENT_CATEGORIES}
+        merged = list(BUILTIN_CONTENT_CATEGORIES)
+        for cat in custom:
+            if cat.name not in builtin_names:
+                merged.append(cat)
+        return merged
+
+    def add_custom(
+        self,
+        db: Session,
+        payload: ContentCategoryCreate,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> ContentCategory:
+        name = payload.name.strip()
+        if not name:
+            raise ValueError("分类名称不能为空")
+        existing = self.list_all(db, user_id=user_id, scoped=scoped)
+        if any(c.name == name for c in existing):
+            raise ValueError("分类名称已存在")
+        category = ContentCategory(
+            id=new_id(),
+            name=name,
+            description=payload.description.strip(),
+            prompt_hint=payload.prompt_hint.strip(),
+            builtin=False,
+        )
+        custom = [c for c in self._load_custom(db, user_id=user_id, scoped=scoped) if not c.builtin]
+        custom.append(category)
+        self._save_custom(db, custom, user_id=user_id, scoped=scoped)
+        return category
+
+    def delete_custom(
+        self,
+        db: Session,
+        category_id: str,
+        *,
+        user_id: str | None = None,
+        scoped: bool = False,
+    ) -> bool:
+        custom = self._load_custom(db, user_id=user_id, scoped=scoped)
+        filtered = [c for c in custom if c.id != category_id]
+        if len(filtered) == len(custom):
+            return False
+        if any(c.id == category_id and c.builtin for c in BUILTIN_CONTENT_CATEGORIES):
+            raise ValueError("内置分类不可删除")
+        self._save_custom(db, filtered, user_id=user_id, scoped=scoped)
+        return True
+
+
 project_repo = ProjectRepository()
 inspiration_repo = InspirationRepository()
 topic_repo = TopicRepository()
 style_repo = StyleRepository()
+category_repo = CategoryRepository()
 
 
 def apply_patch(project: ContentProject, patch: ContentPatch) -> ContentProject:

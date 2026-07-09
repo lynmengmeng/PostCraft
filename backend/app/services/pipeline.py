@@ -7,6 +7,7 @@ from typing import Any, Callable, Awaitable
 from app.skill_pipelines import ALL_PLATFORMS, PLATFORM_CONVERTERS
 from app.models.schemas import (
     AuthorStyleProfile,
+    ContentCategory,
     ContentProject,
     CoverAsset,
     TitleCandidate,
@@ -15,8 +16,9 @@ from app.models.schemas import (
     XiaohongshuImagePage,
 )
 from app.services.chat_context import build_chat_context_block
+from app.services.fact_check import scan_text
 from app.services.llm_client import LLMClient
-from app.services.repository import parse_json_from_text
+from app.services.repository import parse_json_from_text, resolve_prompt_hint
 from app.services.skill_loader import SkillLoader
 from app.services.wechat_html import build_formatted_html, finalize_wechat_content
 from app.services.wechat_assets import (
@@ -24,10 +26,14 @@ from app.services.wechat_assets import (
     sync_image_placements,
 )
 from app.services.xiaohongshu_styles import (
+    build_xhs_page_prompt,
     content_page_prompt,
     estimate_xiaohongshu_page_count,
     extract_xiaohongshu_point_sections,
     pick_style_for_content,
+    polish_xiaohongshu_body,
+    polish_xiaohongshu_title,
+    resolve_style_for_xhs,
     styles_reference_block,
     trim_xiaohongshu_pages,
     XHS_MAX_PAGES,
@@ -50,16 +56,20 @@ class ContentPipeline:
         style_profile: AuthorStyleProfile,
         message: str = "",
         on_delta: StreamCallback = None,
+        content_categories: list[ContentCategory] | None = None,
     ) -> dict[str, Any]:
         if on_delta:
             await on_delta("正在撰写观察型初稿…")
 
+        default_task = self._default_draft_task(project, content_categories)
         draft = await self._run_markdown_skill(
             "general-writing",
             project,
             style_profile,
-            message or "基于灵感撰写只解决一个具体问题的观察型文章初稿，开头直接从痛点切入，不要背景综述",
+            message or default_task,
             input_text=project.inspiration or project.title,
+            content_categories=content_categories,
+            include_chat_context=True,
         )
 
         if on_delta:
@@ -71,9 +81,74 @@ class ContentPipeline:
             style_profile,
             "对以下文章做去 AI 化、真实观察语气润色，保留观点与分寸感",
             input_text=draft,
+            content_categories=content_categories,
+        )
+
+        humanized = await self._retry_humanize_if_banned(
+            humanized,
+            project,
+            style_profile,
+            content_categories,
+            on_delta,
         )
 
         return {"draft": draft, "humanized": humanized}
+
+    async def humanize_draft(
+        self,
+        project: ContentProject,
+        style_profile: AuthorStyleProfile,
+        on_delta: StreamCallback = None,
+        content_categories: list[ContentCategory] | None = None,
+    ) -> dict[str, Any]:
+        source = project.draft or project.humanized or project.inspiration
+        if on_delta:
+            await on_delta("正在重新去 AI 化润色…")
+        humanized = await self._run_markdown_skill(
+            "humanizer-cn",
+            project,
+            style_profile,
+            "对以下文章做去 AI 化、真实观察语气润色，保留观点与分寸感，减少套话和 AI 味",
+            input_text=source,
+            content_categories=content_categories,
+        )
+        humanized = await self._retry_humanize_if_banned(
+            humanized,
+            project,
+            style_profile,
+            content_categories,
+            on_delta,
+        )
+        return {"humanized": humanized, "draft": humanized}
+
+    async def fix_risky_content(
+        self,
+        project: ContentProject,
+        style_profile: AuthorStyleProfile,
+        warnings: list[dict[str, str]],
+        on_delta: StreamCallback = None,
+    ) -> dict[str, Any]:
+        if on_delta:
+            await on_delta("正在优化敏感表述…")
+        humanized = project.humanized or project.draft or project.inspiration
+        issues = "\n".join(
+            f"- 「{w['phrase']}」→ {w['suggestion']}" for w in warnings[:12]
+        )
+        skill = self.skills.load("postcraft-orchestrator")
+        system = (
+            f"{skill}\n\n"
+            "根据风险扫描结果，局部改写初稿 Markdown，保留核心观点，消除夸大或敏感表述。\n"
+            '只输出 JSON：{"humanized":"完整修改后的 Markdown"}'
+        )
+        user = (
+            build_chat_context_block(project)
+            + self._style_block(style_profile, ALL_PLATFORMS)
+            + f"\n\n当前初稿:\n{humanized}\n\n需修正的问题:\n{issues}"
+        )
+        raw = await self.llm.complete(system, user, json_mode=True)
+        payload = parse_json_from_text(raw, fallback_key="humanized")
+        updated = payload.get("humanized", humanized)
+        return {"humanized": updated, "draft": updated}
 
     async def generate_platforms(
         self,
@@ -105,7 +180,7 @@ class ContentPipeline:
         if with_titles or set(targets) == set(ALL_PLATFORMS) or not project.titles:
             if on_delta:
                 await on_delta("正在生成标题备选…")
-            patch["titles"] = await self._generate_titles(project, style_profile, humanized, count=12)
+            patch["titles"] = await self._generate_titles(project, style_profile, humanized, count=20)
 
         return patch
 
@@ -141,6 +216,8 @@ class ContentPipeline:
         style_profile: AuthorStyleProfile,
         message: str,
         on_delta: StreamCallback = None,
+        constraints: list[str] | None = None,
+        content_categories: list[ContentCategory] | None = None,
     ) -> dict[str, Any]:
         if on_delta:
             await on_delta("正在理解修改意图…")
@@ -157,6 +234,7 @@ class ContentPipeline:
             f"{skill}\n\n"
             "根据用户指令修改观察型初稿 Markdown，只改初稿，不涉及各平台格式。\n"
             f"{incorporate_hint}"
+            f"{self._category_block(project, content_categories)}"
             '只输出一个 JSON 对象，不要输出其它说明文字：{"humanized":"完整修改后的 Markdown"}'
         )
         user = (
@@ -165,6 +243,7 @@ class ContentPipeline:
             + f"\n\n选题: {project.inspiration[:500]}\n"
             f"元信息: {json.dumps(project.topic_meta.model_dump(mode='json'), ensure_ascii=False)}\n\n"
             f"当前初稿:\n{humanized}\n\n用户指令: {message}"
+            + self._constraints_block(constraints or [])
         )
         raw = await self.llm.complete(system, user, json_mode=True)
         payload = parse_json_from_text(raw, fallback_key="humanized")
@@ -178,6 +257,8 @@ class ContentPipeline:
         message: str,
         target_platforms: list[str],
         on_delta: StreamCallback = None,
+        constraints: list[str] | None = None,
+        content_categories: list[ContentCategory] | None = None,
     ) -> dict[str, Any]:
         if on_delta:
             await on_delta("正在理解修改意图…")
@@ -199,6 +280,7 @@ class ContentPipeline:
             + f"\n\n选题: {project.inspiration[:500]}\n"
             f"元信息: {json.dumps(project.topic_meta.model_dump(mode='json'), ensure_ascii=False)}\n\n"
             f"当前 humanized:\n{humanized}\n\n用户指令: {message}"
+            + self._constraints_block(constraints or [])
         )
         raw = await self.llm.complete(system, user, json_mode=True)
         payload = parse_json_from_text(raw, fallback_key="humanized")
@@ -403,6 +485,8 @@ class ContentPipeline:
         style_profile: AuthorStyleProfile,
         task: str,
         input_text: str,
+        content_categories: list[ContentCategory] | None = None,
+        include_chat_context: bool = False,
     ) -> str:
         skill = self.skills.load(skill_name)
         extra = ""
@@ -413,19 +497,89 @@ class ContentPipeline:
                 "- 开头直接从痛点切入，禁止「随着……越来越……」类背景铺垫\n"
                 "- 结构：核心问题 + 3-5 个小节 + 「你可以先做这一步」\n"
             )
+        category_block = self._category_block(project, content_categories)
         system = (
             f"{skill}{extra}\n\n"
+            f"{category_block}"
             f"{self._style_block(style_profile, ALL_PLATFORMS)}\n\n"
             "只输出 Markdown 正文，不要 JSON，不要解释。\n"
             "排版要求：用 ## 分节；段落间空一行；并列内容用有序/无序列表；避免整篇长段落。"
         )
+        chat_block = build_chat_context_block(project) if include_chat_context else ""
         user = (
-            f"选题/灵感: {project.inspiration}\n"
+            chat_block
+            + f"选题/灵感: {project.inspiration}\n"
             f"元信息: {json.dumps(project.topic_meta.model_dump(mode='json'), ensure_ascii=False)}\n"
             f"任务: {task}\n\n"
             f"输入内容:\n{input_text}"
         )
         return (await self.llm.complete(system, user)).strip()
+
+    def _default_draft_task(
+        self,
+        project: ContentProject,
+        content_categories: list[ContentCategory] | None = None,
+    ) -> str:
+        pillar = (project.content_pillar or project.topic_meta.content_pillar or "").strip()
+        hint = resolve_prompt_hint(pillar, content_categories)
+        if hint:
+            return hint
+        return "基于灵感撰写只解决一个具体问题的观察型文章初稿，开头直接从痛点切入，不要背景综述"
+
+    def _category_block(
+        self,
+        project: ContentProject,
+        content_categories: list[ContentCategory] | None = None,
+    ) -> str:
+        pillar = (project.content_pillar or project.topic_meta.content_pillar or "").strip()
+        if not pillar:
+            return ""
+        hint = resolve_prompt_hint(pillar, content_categories)
+        lines = [f"\n\n【内容栏目 — {pillar}】"]
+        if hint:
+            lines.append(f"栏目写作指引: {hint}")
+        merged = list(content_categories or [])
+        for cat in merged:
+            if cat.name == pillar and cat.description:
+                lines.append(f"栏目说明: {cat.description}")
+                break
+        return "\n".join(lines) + "\n"
+
+    def _constraints_block(self, constraints: list[str]) -> str:
+        if not constraints:
+            return ""
+        labels = {
+            "温和": "语气更温和、共情，减少尖锐判断",
+            "犀利": "观点更鲜明、直接，但仍保持观察型分寸",
+            "shorter": "篇幅缩短，删去重复与铺垫，保留核心信息",
+        }
+        parts = [labels.get(c, c) for c in constraints if c]
+        if not parts:
+            return ""
+        return "\n\n额外约束：" + "；".join(parts)
+
+    async def _retry_humanize_if_banned(
+        self,
+        humanized: str,
+        project: ContentProject,
+        style_profile: AuthorStyleProfile,
+        content_categories: list[ContentCategory] | None,
+        on_delta: StreamCallback,
+    ) -> str:
+        violations = scan_text(humanized, style_profile.banned_phrases)
+        if not violations:
+            return humanized
+        if on_delta:
+            await on_delta("检测到禁用表达，正在二次润色…")
+        phrases = "、".join(v.phrase for v in violations[:8])
+        return await self._run_markdown_skill(
+            "humanizer-cn",
+            project,
+            style_profile,
+            f"以下文章命中禁用表达（{phrases}），请替换为自然观察语气，保留观点",
+            input_text=humanized,
+            content_categories=content_categories,
+        )
 
     async def _run_converter(
         self,
@@ -586,14 +740,18 @@ class ContentPipeline:
         return payload
 
     def _normalize_xiaohongshu_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        title = str(payload.get("title") or "").strip()
-        body = str(payload.get("body") or "").strip()
+        body = polish_xiaohongshu_body(str(payload.get("body") or ""))
+        title = polish_xiaohongshu_title(str(payload.get("title") or ""), body)
         tags = payload.get("tags") or []
         if not isinstance(tags, list):
             tags = []
-        tags = [str(t).lstrip("#").strip() for t in tags if str(t).strip()][:10]
+        tags = [str(t).lstrip("#").strip() for t in tags if str(t).strip()][:8]
 
-        style = pick_style_for_content(title, body, str(payload.get("cover_style") or ""))
+        style = resolve_style_for_xhs(
+            title=title,
+            body=body,
+            cover_style=str(payload.get("cover_style") or ""),
+        )
         cover_style = str(payload.get("cover_style") or "").strip() or style.id
 
         pages_raw = payload.get("image_pages") or []
@@ -614,21 +772,18 @@ class ContentPipeline:
         elif len(pages) > XHS_MAX_PAGES:
             pages = trim_xiaohongshu_pages(pages)
 
+        total_pages = len(pages)
         for index, page in enumerate(pages):
-            if not page.get("prompt"):
-                role = page.get("role", "content")
-                if role == "cover" or index == 0:
-                    page["prompt"] = style.image_prompt(
-                        headline=str(page.get("headline") or title)[:16],
-                        subheadline=str(page.get("subheadline") or "")[:24],
-                    )
-                else:
-                    page["prompt"] = content_page_prompt(
-                        headline=str(page.get("headline") or f"第{index + 1}页"),
-                        body_text=str(page.get("body_text") or ""),
-                        page_index=index + 1,
-                        style=style,
-                    )
+            role = str(page.get("role") or ("cover" if index == 0 else "content"))
+            page["prompt"] = build_xhs_page_prompt(
+                style=style,
+                role=role,
+                headline=str(page.get("headline") or title)[:20],
+                subheadline=str(page.get("subheadline") or "")[:24],
+                body_text=str(page.get("body_text") or ""),
+                page_index=index + 1,
+                total_pages=total_pages,
+            )
 
         payload["title"] = title
         payload["body"] = body
@@ -724,18 +879,19 @@ class ContentPipeline:
         project: ContentProject,
     ) -> list[dict[str, Any]]:
         pages = xhs.get("image_pages") or []
+        style = resolve_style_for_xhs(
+            title=str(xhs.get("title") or ""),
+            body=str(xhs.get("body") or ""),
+            cover_style=str(xhs.get("cover_style") or ""),
+        )
         if not pages:
-            style = pick_style_for_content(
-                str(xhs.get("title") or ""),
-                str(xhs.get("body") or ""),
-                str(xhs.get("cover_style") or ""),
-            )
             pages = self._build_xiaohongshu_pages_from_body(
                 str(xhs.get("title") or ""),
                 str(xhs.get("body") or ""),
                 style,
             )
 
+        total_pages = min(len(pages), XHS_MAX_PAGES)
         assets: list[dict[str, Any]] = []
         base_index = 100
         for offset, page in enumerate(pages[:XHS_MAX_PAGES]):
@@ -744,7 +900,15 @@ class ContentPipeline:
             role = str(page.get("role") or "content")
             headline = str(page.get("headline") or "")[:20]
             subheadline = str(page.get("subheadline") or "")[:24]
-            prompt = str(page.get("prompt") or "小红书笔记配图，3:4竖版，简洁清爽")
+            prompt = build_xhs_page_prompt(
+                style=style,
+                role=role,
+                headline=headline or str(xhs.get("title") or "")[:20],
+                subheadline=subheadline,
+                body_text=str(page.get("body_text") or ""),
+                page_index=offset + 1,
+                total_pages=total_pages,
+            )
             asset = CoverAsset(
                 platform="xiaohongshu",
                 headline=headline or str(xhs.get("title") or "")[:20],

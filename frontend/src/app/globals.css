@@ -108,6 +108,7 @@ html {
 }
 
 .snippet-card {
+  min-width: 0;
   transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.3s ease;
 }
 .snippet-card:hover {
@@ -216,4 +217,24 @@ html {
 
 .xhs-body .xhs-para:last-child {
   margin-bottom: 0;
+}
+
+/* Chat bubbles & cards: force long URLs / unbroken strings to wrap */
+.long-text-wrap,
+.chat-markdown {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.chat-markdown a,
+.long-text-wrap a {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.chat-markdown p,
+.chat-markdown li,
+.chat-markdown blockquote {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }

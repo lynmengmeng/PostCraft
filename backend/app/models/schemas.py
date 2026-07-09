@@ -188,6 +188,7 @@ class Inspiration(BaseModel):
     is_highlight: bool = False
     tags: list[str] = Field(default_factory=list)
     topic_id: str | None = None
+    trend_snapshot: "TrendInspirationSnapshot | None" = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -203,6 +204,7 @@ class Topic(BaseModel):
     priority: Literal["soon", "later"] = "soon"
     series: str = ""
     inspiration: str = ""
+    trend_snapshot: TrendInspirationSnapshot | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -214,6 +216,24 @@ class AuthorStyleProfile(BaseModel):
     )
     personal_snippets: list[str] = Field(default_factory=list)
     platform_defaults: dict[str, str] = Field(default_factory=dict)
+
+
+class ContentCategory(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    prompt_hint: str = ""
+    builtin: bool = False
+
+
+class ContentCategoryCreate(BaseModel):
+    name: str
+    description: str = ""
+    prompt_hint: str = ""
+
+
+class ContentCategoriesResponse(BaseModel):
+    categories: list[ContentCategory]
 
 
 class ProjectCreate(BaseModel):
@@ -455,6 +475,15 @@ class TrendAnalysis(BaseModel):
     related: list[TrendRelatedItem] = Field(default_factory=list)
 
 
+class TrendInspirationSnapshot(BaseModel):
+    trend_id: str = ""
+    title: str = ""
+    source_label: str = ""
+    summary: str = ""
+    url: str = ""
+    analysis: TrendAnalysis = Field(default_factory=TrendAnalysis)
+
+
 class TrendToTopicRequest(BaseModel):
     title: str
     inspiration: str = ""
@@ -464,6 +493,7 @@ class TrendToTopicRequest(BaseModel):
     trend_id: str = ""
     cover_headline: str = ""
     cover_subheadline: str = ""
+    trend_snapshot: TrendInspirationSnapshot | None = None
 
 
 class UserPublic(BaseModel):

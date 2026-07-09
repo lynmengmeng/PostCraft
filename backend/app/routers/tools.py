@@ -9,6 +9,7 @@ from app.models.schemas import (
     Topic,
     TrendAnalysis,
     TrendAnalysisRequest,
+    TrendInspirationSnapshot,
     TrendRelatedItem,
     TrendToTopicRequest,
     TrendsBoardResponse,
@@ -96,6 +97,7 @@ def trend_to_topic(
         inspiration=payload.inspiration or f"热点工具收录：{title}",
         material_status="idea",
         priority="soon",
+        trend_snapshot=payload.trend_snapshot,
     )
     return topic_repo.create(db, topic, **_scope())
 
@@ -113,11 +115,19 @@ def trend_to_inspiration(
         ["热点工具", payload.content_pillar or "热点观察"],
         payload.trend_id.strip(),
     )
+    snapshot = payload.trend_snapshot
+    if snapshot is None and payload.trend_id.strip():
+        snapshot = TrendInspirationSnapshot(
+            trend_id=payload.trend_id.strip(),
+            title=title,
+            url=payload.source_url.strip(),
+        )
     inspiration = Inspiration(
         content=content,
         source_type="link",
         source_url=payload.source_url.strip(),
         tags=tags,
+        trend_snapshot=snapshot,
     )
     return inspiration_repo.create(db, inspiration, **_scope())
 

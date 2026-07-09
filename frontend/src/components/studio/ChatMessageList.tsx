@@ -38,7 +38,7 @@ export function ChatMessageList({
   const showTyping = sending && !streamingText && !autoDraftPending;
 
   return (
-    <div className="custom-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+    <div className="custom-scrollbar min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden p-4">
       {autoDraftPending && (
         <div className="flex items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-on-surface">
           <Icon name="progress_activity" className="animate-spin text-[18px] text-primary" />
@@ -48,9 +48,9 @@ export function ChatMessageList({
 
       {chatHistory.map((item) =>
         item.role === "user" ? (
-          <div key={item.id} className="flex justify-end">
+          <div key={item.id} className="flex min-w-0 justify-end">
             <div
-              className={`max-w-[88%] rounded-[12px] rounded-tr-none bg-primary/12 px-5 py-3 text-left text-sm leading-relaxed text-on-surface ${
+              className={`long-text-wrap max-w-[88%] min-w-0 rounded-[12px] rounded-tr-none bg-primary/12 px-5 py-3 text-left text-sm leading-relaxed text-on-surface ${
                 item.id.startsWith("pending-") ? "opacity-90" : ""
               }`}
             >
@@ -80,7 +80,7 @@ export function ChatMessageList({
         ) : (
           <div
             key={item.id}
-            className={`group relative rounded-2xl border border-outline-variant/15 bg-surface-container-lowest p-4 text-sm leading-relaxed text-on-surface shadow-sm ${
+            className={`group relative min-w-0 rounded-2xl border border-outline-variant/15 bg-surface-container-lowest p-4 text-sm leading-relaxed text-on-surface shadow-sm ${
               regeneratingId === item.id ? "ring-2 ring-primary/30" : ""
             }`}
           >
@@ -119,7 +119,7 @@ export function ChatMessageList({
       )}
 
       {streamingText && (
-        <div className="rounded-2xl border border-outline-variant/15 bg-surface-container-lowest p-4 text-sm leading-relaxed text-on-surface shadow-sm">
+        <div className="long-text-wrap min-w-0 rounded-2xl border border-outline-variant/15 bg-surface-container-lowest p-4 text-sm leading-relaxed text-on-surface shadow-sm">
           <div
             className="chat-markdown prose prose-sm max-w-none whitespace-pre-wrap"
             dangerouslySetInnerHTML={{ __html: renderChatMarkdown(streamingText) }}

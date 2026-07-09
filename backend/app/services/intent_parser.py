@@ -28,6 +28,7 @@ LAYOUT_PRESET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 NARRATIVE_REFINE_THRESHOLD = 80
 
 QUICK_INTENTS = [
+    (re.compile(r"不要太\s*AI|去\s*AI\s*化|少点\s*AI|AI\s*味|不像\s*AI|减少\s*AI"), "humanize", []),
     (re.compile(r"更温和|温和一点"), "refine_draft", ["温和"]),
     (re.compile(r"更犀利|犀利一点"), "refine_draft", ["犀利"]),
     (re.compile(r"缩短|精简|短一点"), "refine_draft", ["shorter"]),

@@ -1,7 +1,10 @@
 from app.services.xiaohongshu_styles import (
+    build_xhs_page_prompt,
     estimate_xiaohongshu_page_count,
+    get_style,
     load_cover_styles,
     pick_style_for_content,
+    polish_xiaohongshu_body,
     styles_reference_block,
     trim_xiaohongshu_pages,
 )
@@ -48,3 +51,26 @@ def test_styles_reference_block_lists_styles():
     block = styles_reference_block()
     assert "cover_style" in block or "风格库" in block
     assert "split_screen_layout" in block
+
+
+def test_build_xhs_page_prompt_includes_series_anchor():
+    style = get_style("journaling_style")
+    prompt = build_xhs_page_prompt(
+        style=style,
+        role="content",
+        headline="要点一",
+        body_text="慢生活细节",
+        page_index=2,
+        total_pages=4,
+    )
+    assert "系列统一" in prompt
+    assert "第2张" in prompt
+    assert style.label in prompt
+
+
+def test_polish_xiaohongshu_body_normalizes_spacing():
+    body = "第一段   内容\n\n\n第二段"
+    polished = polish_xiaohongshu_body(body)
+    assert "第一段 内容" in polished
+    assert "第二段" in polished
+    assert "\n\n" in polished

@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Run pytest
-        run: python -m pytest -q
+        run: python -m pytest -q --cov=app/services/pipeline --cov=app/services/chat_orchestrator --cov-report=term-missing
 
   frontend:
     runs-on: ubuntu-latest

@@ -3,15 +3,17 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useShell } from "@/components/layout/AppShell";
+import { TrendAnalysisDetailModal } from "@/components/tools/TrendAnalysisDetailModal";
 import { Icon } from "@/components/ui/Icon";
 import { LoadError } from "@/components/ui/LoadError";
+import { CategoryPicker } from "@/components/content/CategoryPicker";
+import { useContentCategories } from "@/hooks/useContentCategories";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { api, platformLabels } from "@/lib/api";
-import type { Platform, Topic } from "@/lib/types";
+import { topicDisplayTitle } from "@/lib/trend-snapshot";
+import type { Platform, Topic, TrendInspirationSnapshot } from "@/lib/types";
 
-const PAGE_SIZE = 8;
-
-const pillars = ["农村老人与家庭健康", "消费陷阱与三无产品", "农村环境与普通人风险"];
+const PAGE_SIZE = 10;
 
 const platformIcons: Record<Platform, string> = {
   wechat: "forum",
@@ -23,6 +25,12 @@ const materialLabels: Record<Topic["material_status"], string> = {
   idea: "仅想法",
   cases: "有素材",
   ready: "可开写",
+};
+
+const materialColors: Record<Topic["material_status"], string> = {
+  idea: "bg-surface-container text-on-surface-variant",
+  cases: "bg-amber-500/10 text-amber-800",
+  ready: "bg-emerald-500/10 text-emerald-800",
 };
 
 function materialProgress(status: Topic["material_status"]) {
@@ -38,7 +46,7 @@ function formatRelativeTime(dateStr: string) {
   if (hours < 24) return `${hours} 小时前编辑`;
   const days = Math.floor(hours / 24);
   if (days === 1) return "昨天编辑";
-  return `编辑于 ${new Date(dateStr).toLocaleDateString()}`;
+  return `编辑于 ${new Date(dateStr).toLocaleDateString("zh-CN")}`;
 }
 
 export default function TopicsPage() {
@@ -46,13 +54,16 @@ export default function TopicsPage() {
   const { searchQuery } = useShell();
   const { data: items, error, loading, reload } = useBackendQuery(() => api.listTopics(), []);
   const { data: stats } = useBackendQuery(() => api.topicStats(), []);
+  const { categories } = useContentCategories();
+  const pillarNames = categories.map((c) => c.name);
   const [title, setTitle] = useState("");
-  const [pillar, setPillar] = useState(pillars[0]);
+  const [pillar, setPillar] = useState("");
   const [tone, setTone] = useState("温和共情");
   const [filterPillar, setFilterPillar] = useState("全部");
   const [page, setPage] = useState(1);
   const [actionError, setActionError] = useState("");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [detailSnapshot, setDetailSnapshot] = useState<TrendInspirationSnapshot | null>(null);
 
   const filtered = useMemo(() => {
     let list = items ?? [];
@@ -64,6 +75,7 @@ export default function TopicsPage() {
       list = list.filter(
         (item) =>
           item.title.toLowerCase().includes(q) ||
+          topicDisplayTitle(item).toLowerCase().includes(q) ||
           item.content_pillar.toLowerCase().includes(q) ||
           item.tone.toLowerCase().includes(q),
       );
@@ -150,47 +162,37 @@ export default function TopicsPage() {
 
   return (
     <div className="flex min-h-[calc(100vh-64px)] bg-background">
-      <div className="flex-1">
-        <section className="p-8 pb-4">
-          <div className="mb-8 flex items-end justify-between">
-            <div>
-              <nav className="mb-2 flex items-center gap-2 text-on-surface-variant">
-                <span className="text-[10px] font-medium uppercase tracking-widest">Studio</span>
-                <Icon name="chevron_right" className="text-xs" />
-                <span className="text-[10px] font-medium uppercase tracking-widest">Library</span>
-              </nav>
-              <h2 className="font-display text-[48px] leading-tight text-on-surface">选题库</h2>
-              <p className="mt-2 max-w-xl text-on-surface-variant">
-                按内容支柱整理选题，并进入创作室。
-              </p>
-            </div>
+      <div className="min-w-0 flex-1">
+        <section className="p-6 pb-4 lg:p-8">
+          <div className="mb-8">
+            <h2 className="font-headline text-3xl font-semibold text-on-surface lg:text-4xl">选题库</h2>
+            <p className="mt-2 max-w-xl text-sm text-on-surface-variant">
+              按内容支柱整理选题，热点选题可回看分析详情并进入创作室。
+            </p>
           </div>
 
-          <div className="mb-8 max-w-4xl rounded-2xl border border-outline-variant bg-surface-container-lowest p-8 shadow-sm">
+          <div className="mb-8 max-w-4xl rounded-2xl border border-outline-variant/40 bg-surface p-6 shadow-sm lg:p-8">
             <div className="space-y-4">
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && createTopic()}
                 placeholder="例如：农村老人早逝背后的隐形原因"
-                className="w-full rounded-xl border border-outline-variant bg-white px-4 py-3 text-on-surface outline-none transition-all placeholder:text-outline focus:border-topic-primary focus:ring-2 focus:ring-topic-primary/20"
+                className="w-full rounded-xl border border-outline-variant/30 bg-surface-container-lowest px-4 py-3 text-on-surface outline-none transition-all placeholder:text-on-surface-variant/50 focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
               <div className="flex flex-wrap gap-4">
-                <select
+                <CategoryPicker
+                  categories={categories}
                   value={pillar}
-                  onChange={(e) => setPillar(e.target.value)}
-                  className="min-w-[200px] rounded-lg border border-outline-variant bg-white px-4 py-2 text-sm text-on-surface outline-none focus:ring-2 focus:ring-topic-primary"
-                >
-                  {pillars.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setPillar}
+                  allowEmpty
+                  emptyLabel="选择栏目（可选）"
+                  className="min-w-[200px]"
+                />
                 <select
                   value={tone}
                   onChange={(e) => setTone(e.target.value)}
-                  className="min-w-[160px] rounded-lg border border-outline-variant bg-white px-4 py-2 text-sm text-on-surface outline-none focus:ring-2 focus:ring-topic-primary"
+                  className="min-w-[160px] rounded-xl border border-outline-variant/30 bg-surface-container-lowest px-4 py-2.5 text-sm text-on-surface outline-none focus:ring-2 focus:ring-primary/20"
                 >
                   <option value="温和共情">温和共情</option>
                   <option value="理性观察">理性观察</option>
@@ -200,7 +202,7 @@ export default function TopicsPage() {
               <button
                 type="button"
                 onClick={createTopic}
-                className="rounded-lg bg-accent-cta px-6 py-2 font-bold text-white transition-opacity hover:opacity-90"
+                className="rounded-xl bg-primary px-6 py-2.5 text-sm font-bold text-on-primary transition-opacity hover:opacity-90"
               >
                 保存选题
               </button>
@@ -213,8 +215,8 @@ export default function TopicsPage() {
             </p>
           )}
 
-          <div className="mb-8 flex flex-wrap gap-2">
-            {["全部", ...pillars].map((item) => (
+          <div className="mb-6 flex flex-wrap gap-2">
+            {["全部", ...pillarNames].map((item) => (
               <button
                 key={item}
                 type="button"
@@ -224,8 +226,8 @@ export default function TopicsPage() {
                 }}
                 className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
                   filterPillar === item
-                    ? "bg-accent-cta text-white"
-                    : "border border-outline-variant bg-white text-on-surface-variant hover:bg-surface-container-low"
+                    ? "bg-primary text-on-primary"
+                    : "border border-outline-variant/40 bg-surface text-on-surface-variant hover:bg-surface-container-low"
                 }`}
               >
                 {item}
@@ -234,7 +236,7 @@ export default function TopicsPage() {
           </div>
         </section>
 
-        <section className="px-8 pb-12">
+        <section className="px-6 pb-12 lg:px-8">
           {error ? (
             <LoadError message={error} onRetry={() => void reload()} />
           ) : loading ? (
@@ -242,116 +244,123 @@ export default function TopicsPage() {
           ) : filtered.length === 0 ? (
             <p className="text-sm text-on-surface-variant/50">暂无选题，在上方创建第一个吧。</p>
           ) : (
-            <div className="overflow-hidden rounded-2xl border border-outline-variant bg-white shadow-sm">
-              <table className="w-full border-collapse text-left">
-                <thead>
-                  <tr className="border-b border-outline-variant bg-surface-container-low">
-                    <th className="w-[35%] px-6 py-4 text-[13px] font-medium uppercase tracking-wider text-on-surface-variant">
-                      选题标题
-                    </th>
-                    <th className="px-6 py-4 text-[13px] font-medium uppercase tracking-wider text-on-surface-variant">
-                      内容支柱
-                    </th>
-                    <th className="px-6 py-4 text-[13px] font-medium uppercase tracking-wider text-on-surface-variant">
-                      基调
-                    </th>
-                    <th className="px-6 py-4 text-[13px] font-medium uppercase tracking-wider text-on-surface-variant">
-                      平台
-                    </th>
-                    <th className="px-6 py-4 text-[13px] font-medium uppercase tracking-wider text-on-surface-variant">
-                      素材
-                    </th>
-                    <th className="px-6 py-4 text-right text-[13px] font-medium uppercase tracking-wider text-on-surface-variant">
-                      操作
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-outline-variant">
-                  {paged.map((item) => {
-                    const progress = materialProgress(item.material_status);
-                    return (
-                      <tr
-                        key={item.id}
-                        className="group transition-colors hover:bg-surface-container-lowest"
-                      >
-                        <td className="px-6 py-5">
-                          <div className="flex flex-col gap-1">
-                            <span className="font-bold leading-tight text-on-surface">
-                              {item.title}
+            <div className="space-y-3">
+              {paged.map((item) => {
+                const progress = materialProgress(item.material_status);
+                const displayTitle = topicDisplayTitle(item);
+                const hasTrend = Boolean(item.trend_snapshot?.analysis?.why_hot);
+
+                return (
+                  <article
+                    key={item.id}
+                    className="group rounded-2xl border border-outline-variant/30 bg-surface p-5 shadow-sm transition-shadow hover:shadow-md"
+                  >
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          {hasTrend && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
+                              <Icon name="local_fire_department" className="text-[14px]" />
+                              热点选题
                             </span>
-                            <span className="text-xs italic text-on-surface-variant">
-                              {formatRelativeTime(item.updated_at || item.created_at)}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-5">
-                          <span className="rounded-full bg-secondary-container px-2.5 py-1 text-[11px] font-bold uppercase tracking-tighter text-on-surface-variant">
+                          )}
+                          <span className="whitespace-nowrap rounded-full bg-surface-container px-2.5 py-0.5 text-[11px] font-medium text-on-surface-variant">
                             {item.content_pillar || "未分类"}
                           </span>
-                        </td>
-                        <td className="px-6 py-5 text-sm">{item.tone}</td>
-                        <td className="px-6 py-5">
-                          <div className="flex gap-2 text-on-surface-variant">
+                          <span className="text-[11px] text-on-surface-variant/70">
+                            {formatRelativeTime(item.updated_at || item.created_at)}
+                          </span>
+                        </div>
+
+                        <h3 className="long-text-wrap line-clamp-2 text-lg font-semibold leading-snug text-on-surface">
+                          {displayTitle}
+                        </h3>
+
+                        {item.trend_snapshot?.summary && (
+                          <p className="long-text-wrap mt-2 line-clamp-2 text-sm text-on-surface-variant">
+                            {item.trend_snapshot.summary}
+                          </p>
+                        )}
+
+                        <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-on-surface-variant">
+                          <span>{item.tone}</span>
+                          <span className="text-outline-variant">·</span>
+                          <div className="flex gap-1.5">
                             {item.platforms.map((p) => (
-                              <span key={p} title={platformLabels[p]}>
-                                <Icon name={platformIcons[p]} className="text-[18px]" />
+                              <span
+                                key={p}
+                                title={platformLabels[p]}
+                                className="flex h-7 w-7 items-center justify-center rounded-lg bg-surface-container-low"
+                              >
+                                <Icon name={platformIcons[p]} className="text-[16px]" />
                               </span>
                             ))}
                           </div>
-                        </td>
-                        <td className="px-6 py-5">
-                          <div className="flex items-center gap-2">
-                            <select
-                              value={item.material_status}
-                              disabled={updatingId === item.id}
-                              onChange={(e) =>
-                                void updateMaterialStatus(
-                                  item.id,
-                                  e.target.value as Topic["material_status"],
-                                )
-                              }
-                              className="rounded-lg border border-outline-variant bg-white px-2 py-1 text-[11px] outline-none focus:ring-1 focus:ring-topic-primary"
-                            >
-                              {(Object.keys(materialLabels) as Topic["material_status"][]).map(
-                                (key) => (
-                                  <option key={key} value={key}>
-                                    {materialLabels[key]}
-                                  </option>
-                                ),
-                              )}
-                            </select>
-                            <div className="h-1.5 w-12 overflow-hidden rounded-full bg-surface-container">
-                              <div
-                                className="h-full bg-topic-primary"
-                                style={{ width: `${progress}%` }}
-                              />
-                            </div>
+                        </div>
+                      </div>
+
+                      <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center lg:flex-col lg:items-end">
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={item.material_status}
+                            disabled={updatingId === item.id}
+                            onChange={(e) =>
+                              void updateMaterialStatus(
+                                item.id,
+                                e.target.value as Topic["material_status"],
+                              )
+                            }
+                            className={`rounded-lg border-0 px-2.5 py-1 text-[11px] font-semibold outline-none focus:ring-2 focus:ring-primary/20 ${materialColors[item.material_status]}`}
+                          >
+                            {(Object.keys(materialLabels) as Topic["material_status"][]).map(
+                              (key) => (
+                                <option key={key} value={key}>
+                                  {materialLabels[key]}
+                                </option>
+                              ),
+                            )}
+                          </select>
+                          <div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-container">
+                            <div
+                              className="h-full rounded-full bg-primary transition-all"
+                              style={{ width: `${progress}%` }}
+                            />
                           </div>
-                        </td>
-                        <td className="px-6 py-5 text-right">
-                          <div className="flex items-center justify-end gap-2">
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          {item.trend_snapshot && (
                             <button
                               type="button"
-                              onClick={() => enterStudio(item.id)}
-                              className="rounded-lg bg-topic-primary px-4 py-1.5 text-xs font-bold text-white opacity-100 transition-all sm:opacity-0 sm:group-hover:opacity-100 hover:opacity-90"
+                              onClick={() => setDetailSnapshot(item.trend_snapshot ?? null)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
                             >
-                              进入创作室
+                              <Icon name="insights" className="text-[16px]" />
+                              热点分析
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => remove(item.id)}
-                              className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface-variant hover:text-error"
-                            >
-                              删除
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <div className="flex items-center justify-between border-t border-outline-variant bg-surface-container-lowest p-6">
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => enterStudio(item.id)}
+                            className="rounded-lg bg-primary px-4 py-1.5 text-xs font-bold text-on-primary transition-opacity hover:opacity-90"
+                          >
+                            进入创作室
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => remove(item.id)}
+                            className="rounded-lg border border-outline-variant/40 px-3 py-1.5 text-xs text-on-surface-variant transition-colors hover:border-error/30 hover:text-error"
+                          >
+                            删除
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+
+              <div className="flex items-center justify-between rounded-2xl border border-outline-variant/30 bg-surface-container-lowest px-5 py-4">
                 <span className="text-xs text-on-surface-variant">
                   显示 {(safePage - 1) * PAGE_SIZE + 1}–
                   {Math.min(safePage * PAGE_SIZE, filtered.length)}，共 {filtered.length} 个选题
@@ -361,18 +370,18 @@ export default function TopicsPage() {
                     type="button"
                     disabled={safePage <= 1}
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-outline-variant transition-colors hover:bg-surface-container disabled:opacity-40"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-outline-variant/40 transition-colors hover:bg-surface-container disabled:opacity-40"
                   >
                     <Icon name="chevron_left" className="text-sm" />
                   </button>
-                  <span className="flex h-8 min-w-8 items-center justify-center rounded-lg border border-outline-variant bg-topic-primary px-2 text-xs font-bold text-white">
+                  <span className="flex h-8 min-w-8 items-center justify-center rounded-lg bg-primary px-2 text-xs font-bold text-on-primary">
                     {safePage}
                   </span>
                   <button
                     type="button"
                     disabled={safePage >= totalPages}
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-outline-variant transition-colors hover:bg-surface-container disabled:opacity-40"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-outline-variant/40 transition-colors hover:bg-surface-container disabled:opacity-40"
                   >
                     <Icon name="chevron_right" className="text-sm" />
                   </button>
@@ -386,17 +395,17 @@ export default function TopicsPage() {
       <aside className="hidden w-80 shrink-0 flex-col gap-8 border-l border-outline-variant/50 bg-surface p-6 xl:flex">
         <div>
           <h3 className="mb-6 text-[11px] font-bold uppercase tracking-[0.15em] text-on-surface-variant">
-            Studio Insight
+            选题概览
           </h3>
           <div className="rounded-xl bg-surface-container-low p-4">
             <div className="mb-3 flex items-center justify-between">
               <span className="text-sm font-bold">热门基调</span>
-              <Icon name="trending_up" className="text-sm text-topic-primary" />
+              <Icon name="trending_up" className="text-sm text-primary" />
             </div>
             <p className="text-xs leading-relaxed text-on-surface-variant">
               {stats?.top_tone ? (
                 <>
-                  当前最多选题使用 <span className="font-bold text-topic-primary">{stats.top_tone}</span>{" "}
+                  当前最多选题使用 <span className="font-bold text-primary">{stats.top_tone}</span>{" "}
                   基调（{stats.by_tone[stats.top_tone]} 个）
                 </>
               ) : (
@@ -422,12 +431,12 @@ export default function TopicsPage() {
                   className="flex w-full items-start gap-3 rounded-xl p-3 text-left transition-colors hover:bg-surface-container-low"
                 >
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-container">
-                    <Icon name="edit_note" className="text-[18px] text-topic-primary" />
+                    <Icon name="edit_note" className="text-[18px] text-primary" />
                   </div>
-                  <div>
-                    <p className="line-clamp-2 text-xs font-bold">{topic.title}</p>
+                  <div className="min-w-0">
+                    <p className="line-clamp-2 text-xs font-bold">{topicDisplayTitle(topic)}</p>
                     <p className="mt-1 flex items-center gap-1 text-[10px] text-on-surface-variant">
-                      <Icon name="check_circle" className="text-[10px] text-topic-primary" />
+                      <Icon name="check_circle" className="text-[10px] text-primary" />
                       素材就绪
                     </p>
                   </div>
@@ -449,13 +458,20 @@ export default function TopicsPage() {
                   <span className="font-bold">{percent}%</span>
                 </div>
                 <div className="h-1 overflow-hidden rounded-full bg-surface-container">
-                  <div className="h-full bg-on-surface" style={{ width: `${percent}%` }} />
+                  <div className="h-full bg-primary" style={{ width: `${percent}%` }} />
                 </div>
               </div>
             ))}
           </div>
         </div>
       </aside>
+
+      {detailSnapshot && (
+        <TrendAnalysisDetailModal
+          snapshot={detailSnapshot}
+          onClose={() => setDetailSnapshot(null)}
+        />
+      )}
     </div>
   );
 }

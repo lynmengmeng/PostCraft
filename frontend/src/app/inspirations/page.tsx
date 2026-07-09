@@ -4,11 +4,14 @@ import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useShell } from "@/components/layout/AppShell";
 import { Icon } from "@/components/ui/Icon";
+import { CategoryPicker } from "@/components/content/CategoryPicker";
+import { TrendAnalysisDetailModal } from "@/components/tools/TrendAnalysisDetailModal";
 import { LoadError } from "@/components/ui/LoadError";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
+import { useContentCategories } from "@/hooks/useContentCategories";
 import { api } from "@/lib/api";
 import { resolveImageUrl } from "@/lib/export";
-import type { Inspiration } from "@/lib/types";
+import type { Inspiration, TrendInspirationSnapshot } from "@/lib/types";
 
 const sourceLabels: Record<Inspiration["source_type"], string> = {
   manual: "手动录入",
@@ -60,10 +63,12 @@ export default function InspirationsPage() {
     () => api.listInspirations(),
     [],
   );
+  const { categories } = useContentCategories();
   const [createMode, setCreateMode] = useState<CreateMode>("manual");
   const [content, setContent] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
   const [tagsInput, setTagsInput] = useState("");
+  const [categoryPillar, setCategoryPillar] = useState("");
   const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [tagFilter, setTagFilter] = useState("全部");
@@ -75,12 +80,14 @@ export default function InspirationsPage() {
   const [editContent, setEditContent] = useState("");
   const [editTagsInput, setEditTagsInput] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [detailSnapshot, setDetailSnapshot] = useState<TrendInspirationSnapshot | null>(null);
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
+    categories.forEach((c) => tags.add(c.name));
     (items ?? []).forEach((item) => item.tags.forEach((t) => tags.add(t)));
     return Array.from(tags);
-  }, [items]);
+  }, [items, categories]);
 
   const sourceCounts = useMemo(() => {
     const counts: Record<Inspiration["source_type"], number> = {
@@ -132,6 +139,9 @@ export default function InspirationsPage() {
     setSubmitting(true);
     try {
       const tags = parseTagsInput(tagsInput);
+      if (categoryPillar && !tags.includes(categoryPillar)) {
+        tags.unshift(categoryPillar);
+      }
       if (createMode === "screenshot") {
         if (!screenshotFile) {
           setActionError("请选择截图文件");
@@ -155,6 +165,7 @@ export default function InspirationsPage() {
       }
       setContent("");
       setTagsInput("");
+      setCategoryPillar("");
       await reload();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "保存失败");
@@ -308,6 +319,44 @@ export default function InspirationsPage() {
           <Icon name="delete" className="text-[18px]" />
         </button>
       </div>
+    );
+  }
+
+  function renderTrendDetailButton(item: Inspiration) {
+    if (!item.trend_snapshot) return null;
+    return (
+      <button
+        type="button"
+        onClick={() => setDetailSnapshot(item.trend_snapshot ?? null)}
+        className="mb-4 inline-flex items-center gap-1 rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-[12px] font-semibold text-primary transition-colors hover:bg-primary/10"
+      >
+        <Icon name="insights" className="text-[16px]" />
+        查看热点分析
+      </button>
+    );
+  }
+
+  function renderCardPreview(item: Inspiration) {
+    const preview = item.trend_snapshot?.title || item.content;
+    const subtitle = item.trend_snapshot?.summary || (item.trend_snapshot ? item.content : "");
+    return (
+      <>
+        <p
+          className={`long-text-wrap font-headline leading-relaxed text-on-surface ${
+            item.is_highlight
+              ? "text-[24px] font-semibold italic text-primary"
+              : "text-[22px] font-medium"
+          }`}
+        >
+          {preview}
+        </p>
+        {subtitle && (
+          <p className="long-text-wrap mb-4 mt-3 line-clamp-3 text-[14px] leading-relaxed text-on-surface-variant">
+            {subtitle}
+          </p>
+        )}
+        {!subtitle && <div className="mb-4" />}
+      </>
     );
   }
 
@@ -481,6 +530,16 @@ export default function InspirationsPage() {
                 className="min-h-[120px] w-full resize-none rounded-xl border border-outline-variant/30 bg-surface-container-lowest p-6 text-[15px] outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
 
+              <div>
+                <p className="mb-2 text-xs font-semibold text-on-surface-variant">内容栏目（可选）</p>
+                <CategoryPicker
+                  categories={categories}
+                  value={categoryPillar}
+                  onChange={setCategoryPillar}
+                  emptyLabel="不指定栏目"
+                />
+              </div>
+
               <div className="relative">
                 <Icon
                   name="tag"
@@ -530,7 +589,7 @@ export default function InspirationsPage() {
                   ? "snippet-card flex flex-col overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container-low p-8 shadow-sm"
                   : item.source_type === "screenshot" && item.image_url
                     ? "snippet-card flex flex-col overflow-hidden rounded-xl border border-outline-variant/40 bg-surface shadow-sm"
-                    : "snippet-card flex flex-col rounded-xl border border-outline-variant/40 bg-surface p-8 shadow-sm";
+                    : "snippet-card flex min-w-0 flex-col overflow-hidden rounded-xl border border-outline-variant/40 bg-surface p-8 shadow-sm";
 
                 if (item.source_type === "screenshot" && item.image_url && editingId !== item.id) {
                   return (
@@ -549,7 +608,7 @@ export default function InspirationsPage() {
                         </div>
                       </div>
                       <div className="flex flex-1 flex-col p-8">
-                        <p className="mb-6 line-clamp-3 text-[15px] leading-relaxed text-on-surface-variant">
+                        <p className="long-text-wrap mb-6 line-clamp-3 text-[15px] leading-relaxed text-on-surface-variant">
                           {item.content}
                         </p>
                         <button
@@ -619,20 +678,13 @@ export default function InspirationsPage() {
                             href={item.source_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="mb-3 block truncate text-xs text-primary hover:underline"
+                            className="long-text-wrap mb-3 block text-xs text-primary hover:underline"
                           >
                             {item.source_url}
                           </a>
                         )}
-                        <p
-                          className={`font-headline mb-8 leading-relaxed text-on-surface ${
-                            isHighlight
-                              ? "text-[24px] font-semibold italic text-primary"
-                              : "text-[22px] font-medium"
-                          }`}
-                        >
-                          {item.content}
-                        </p>
+                        {renderCardPreview(item)}
+                        {renderTrendDetailButton(item)}
                       </>
                     )}
 
@@ -755,6 +807,13 @@ export default function InspirationsPage() {
           新建灵感
         </span>
       </button>
+
+      {detailSnapshot && (
+        <TrendAnalysisDetailModal
+          snapshot={detailSnapshot}
+          onClose={() => setDetailSnapshot(null)}
+        />
+      )}
     </div>
   );
 }

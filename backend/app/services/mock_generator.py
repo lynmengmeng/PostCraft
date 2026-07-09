@@ -15,10 +15,39 @@ from app.models.schemas import (
 
 def _mock_humanized(project: ContentProject) -> str:
     inspiration = project.inspiration or project.title
+    pillar = (project.content_pillar or project.topic_meta.content_pillar or "").strip()
+    templates: dict[str, str] = {
+        "周末出走计划": (
+            f"## 这个周末，我想出去透口气\n\n{inspiration}\n\n"
+            "骑电动车去江边的那条路，风不大，但足够把脑子里的噪音吹散一点。"
+            "不用请假，不用花很多钱，半天就够。"
+        ),
+        "便宜但有用": (
+            f"## 便宜，但真的有用\n\n{inspiration}\n\n"
+            "这些东西都不贵，但我用了之后确实觉得生活舒服了一点。"
+            "不是广告清单，是我真实留下来的。"
+        ),
+        "一个小故事": (
+            f"## 她说，她只是想安静地过一个周末\n\n{inspiration}\n\n"
+            "故事不长，但那个瞬间我记了很久。"
+            "成年人最想要的，有时候只是半天自由。"
+        ),
+        "路上听什么": (
+            f"## 适合骑车去江边听的歌\n\n{inspiration}\n\n"
+            "不是今日推荐歌曲列表，是某条路、某个傍晚、某次出走时反复听的几首歌。"
+        ),
+        "普通人观察": (
+            f"## 普通人的喘息时刻\n\n{inspiration}\n\n"
+            "不是宏大叙事，是身边越来越常见的情绪："
+            "不想旅行，只是想离开现在的生活半天。"
+        ),
+    }
+    if pillar in templates:
+        return templates[pillar]
     return (
         f"## 观察\n\n{inspiration}\n\n"
-        "这不是危言耸听，而是我在回农村时反复看到的生活细节。"
-        "很多风险不是突然降临，而是在日常里被一点点忽略。"
+        "这不是危言耸听，而是我在生活里反复看到的细节。"
+        "很多变化不是突然降临，而是在日常里被一点点忽略。"
     )
 
 

@@ -1,4 +1,5 @@
 import type { ContentProject, CoverAsset, Platform, XiaohongshuImagePage } from "./types";
+import { hasRealImage } from "./wechat-assets";
 
 export function wechatCoverAssets(assets: CoverAsset[]): CoverAsset[] {
   return assets.filter((a) => a.platform === "wechat" || a.platform === "all");
@@ -32,6 +33,16 @@ export function xiaohongshuCarouselLabel(
   }
   if (page?.role === "summary") return "轮播总结页";
   return `轮播第 ${slot + 1} 张`;
+}
+
+export function xiaohongshuAssetNeedsGeneration(
+  asset: CoverAsset,
+  options?: { force?: boolean },
+): boolean {
+  if (options?.force) return true;
+  if (asset.source === "upload" && asset.image_url) return false;
+  if (asset.source === "generated" && hasRealImage(asset)) return false;
+  return true;
 }
 
 export function hasXiaohongshuCarouselPlan(project: ContentProject): boolean {

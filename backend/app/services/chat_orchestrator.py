@@ -10,6 +10,7 @@ from app.models.schemas import (
     AuthorStyleProfile,
     ChangeRecord,
     ChatMessage,
+    ContentCategory,
     ContentPatch,
     ContentProject,
     ProjectVersion,
@@ -126,6 +127,7 @@ class ChatOrchestrator:
         action: str | None = None,
         target_platforms: list[str] | None = None,
         attachment_urls: list[str] | None = None,
+        content_categories: list[ContentCategory] | None = None,
     ) -> tuple[ContentProject, ContentPatch, ChatMessage]:
         parsed = self._resolve_intent(
             message,
@@ -173,6 +175,7 @@ class ChatOrchestrator:
             style_profile,
             on_delta,
             attachment_urls=attachment_urls,
+            content_categories=content_categories,
         )
         self._snapshot(project, patch.summary)
         updated = apply_patch(project, patch)
@@ -362,11 +365,16 @@ class ChatOrchestrator:
         style_profile: AuthorStyleProfile,
         on_delta: StreamCallback = None,
         attachment_urls: list[str] | None = None,
+        content_categories: list[ContentCategory] | None = None,
     ) -> ContentPatch:
         if parsed.intent == "generate_draft":
             if self.llm.status().configured:
                 patch_data = await self.pipeline.generate_draft(
-                    project, style_profile, message, on_delta=on_delta
+                    project,
+                    style_profile,
+                    message,
+                    on_delta=on_delta,
+                    content_categories=content_categories,
                 )
                 return ContentPatch(
                     intent="generate_draft",
@@ -633,6 +641,23 @@ class ChatOrchestrator:
                 patch={},
             )
 
+        if parsed.intent == "humanize":
+            if self.llm.status().configured:
+                patch_data = await self.pipeline.humanize_draft(
+                    project,
+                    style_profile,
+                    on_delta=on_delta,
+                    content_categories=content_categories,
+                )
+                return ContentPatch(
+                    intent="humanize",
+                    target_platforms=[],
+                    summary="已重新去 AI 化润色初稿。",
+                    patch=patch_data,
+                    changes=self._changes_from_patch(patch_data),
+                )
+            return build_mock_refine_draft(project, message)
+
         if parsed.intent == "fact_check":
             warnings = self._build_warnings(project, style_profile)
             summary = (
@@ -640,18 +665,31 @@ class ChatOrchestrator:
                 if warnings
                 else "未发现明显敏感或夸大表述。"
             )
+            patch_data: dict[str, Any] = {}
+            if warnings and self.llm.status().configured and is_explicit_fact_check_request(message):
+                patch_data = await self.pipeline.fix_risky_content(
+                    project, style_profile, [w.model_dump() for w in warnings], on_delta=on_delta
+                )
+                summary = f"已扫描并优化 {len(warnings)} 处表述风险。"
             return ContentPatch(
                 intent="fact_check",
                 target_platforms=["all"],
                 summary=summary,
-                patch={},
+                patch=patch_data,
+                changes=self._changes_from_patch(patch_data) if patch_data else [],
             )
 
         if parsed.intent == "patch_platform":
             if self.llm.status().configured:
                 targets = list(parsed.target_platforms) or ALL_PLATFORMS
                 patch_data = await self.pipeline.patch_platforms(
-                    project, style_profile, message, targets, on_delta=on_delta
+                    project,
+                    style_profile,
+                    message,
+                    targets,
+                    on_delta=on_delta,
+                    constraints=parsed.constraints,
+                    content_categories=content_categories,
                 )
                 if "wechat" in targets and project.cover_assets:
                     patch_data = self._finalize_wechat_in_patch(
@@ -673,7 +711,12 @@ class ChatOrchestrator:
             hints = ["cascade_available"] if _has_platform_content(project) else []
             if self.llm.status().configured:
                 patch_data = await self.pipeline.refine_draft(
-                    project, style_profile, message, on_delta=on_delta
+                    project,
+                    style_profile,
+                    message,
+                    on_delta=on_delta,
+                    constraints=parsed.constraints,
+                    content_categories=content_categories,
                 )
                 summary = (
                     "已更新初稿。请选择是否同步到已有平台版本。"
@@ -692,7 +735,12 @@ class ChatOrchestrator:
 
         if self.llm.status().configured:
             patch_data = await self.pipeline.refine_draft(
-                project, style_profile, message, on_delta=on_delta
+                project,
+                style_profile,
+                message,
+                on_delta=on_delta,
+                constraints=parsed.constraints,
+                content_categories=content_categories,
             )
             hints = ["cascade_available"] if _has_platform_content(project) else []
             return ContentPatch(

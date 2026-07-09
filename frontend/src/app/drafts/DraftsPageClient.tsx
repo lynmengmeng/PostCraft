@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { CategoryChip, CategoryPicker } from "@/components/content/CategoryPicker";
 import { LoadError } from "@/components/ui/LoadError";
 import { useShell } from "@/components/layout/AppShell";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
+import { useContentCategories } from "@/hooks/useContentCategories";
 import { api, platformLabels, statusLabels } from "@/lib/api";
 import type { ContentProject, Platform, PublishRecord } from "@/lib/types";
 
@@ -19,14 +21,35 @@ export function DraftsPageClient() {
     reload,
     setData: setProjects,
   } = useBackendQuery(() => api.listProjects(), []);
+  const {
+    categories,
+    loading: categoriesLoading,
+  } = useContentCategories();
   const [tab, setTab] = useState<Tab>("all");
+  const [categoryFilter, setCategoryFilter] = useState("全部");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [form, setForm] = useState({ platform: "wechat" as Platform, url: "", note: "" });
+  const [updatingCategoryId, setUpdatingCategoryId] = useState<string | null>(null);
+
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const project of projects ?? []) {
+      const key = project.content_pillar?.trim() || "未分类";
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return counts;
+  }, [projects]);
 
   const filtered = useMemo(() => {
     let list = projects ?? [];
     if (tab === "ready") list = list.filter((p) => p.status === "ready");
     if (tab === "published") list = list.filter((p) => p.status === "published");
+    if (categoryFilter !== "全部") {
+      list = list.filter((p) => {
+        const pillar = p.content_pillar?.trim() || "未分类";
+        return pillar === categoryFilter;
+      });
+    }
     const q = searchQuery.trim().toLowerCase();
     if (q) {
       list = list.filter(
@@ -37,12 +60,22 @@ export function DraftsPageClient() {
       );
     }
     return list;
-  }, [projects, tab, searchQuery]);
+  }, [projects, tab, categoryFilter, searchQuery]);
 
   async function deleteProject(id: string) {
     await api.deleteProject(id);
     setProjects((prev) => (prev ?? []).filter((item) => item.id !== id));
     if (activeId === id) setActiveId(null);
+  }
+
+  async function updateProjectCategory(project: ContentProject, content_pillar: string) {
+    setUpdatingCategoryId(project.id);
+    try {
+      const updated = await api.updateProject(project.id, { content_pillar });
+      setProjects((prev) => (prev ?? []).map((item) => (item.id === updated.id ? updated : item)));
+    } finally {
+      setUpdatingCategoryId(null);
+    }
   }
 
   async function savePublishRecord(project: ContentProject) {
@@ -54,23 +87,41 @@ export function DraftsPageClient() {
       status: "published",
       note: form.note,
     };
+    const records = [...(project.publish_records || []), record];
+    const targetPlatforms = project.topic_meta.platforms?.length
+      ? project.topic_meta.platforms
+      : (["wechat", "xiaohongshu", "douyin"] as Platform[]);
+    const publishedPlatforms = new Set(
+      records.filter((r) => r.status === "published").map((r) => r.platform),
+    );
+    const allPublished = targetPlatforms.every((p) => publishedPlatforms.has(p));
     const updated = await api.updateProject(project.id, {
-      status: "published",
-      publish_records: [...(project.publish_records || []), record],
+      status: allPublished ? "published" : project.status === "ready" ? "ready" : "draft",
+      publish_records: records,
     });
     setProjects((prev) => (prev ?? []).map((item) => (item.id === updated.id ? updated : item)));
     setActiveId(null);
     setForm({ platform: "wechat", url: "", note: "" });
   }
 
+  const filterOptions = useMemo(() => {
+    const names = categories.map((c) => c.name);
+    const extras = Object.keys(categoryCounts).filter(
+      (name) => name !== "未分类" && !names.includes(name),
+    );
+    return ["全部", ...names, ...extras, ...(categoryCounts["未分类"] ? ["未分类"] : [])];
+  }, [categories, categoryCounts]);
+
   return (
     <div className="space-y-6 p-8">
       <div>
         <h1 className="font-headline text-2xl font-semibold">草稿箱与发布清单</h1>
-        <p className="text-sm text-on-surface-variant">管理草稿、待发布内容与手动发布记录。</p>
+        <p className="text-sm text-on-surface-variant">
+          按栏目管理草稿，手动归类内容，追踪待发布与已发布状态。
+        </p>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         {([
           ["all", "全部"],
           ["ready", "待发布"],
@@ -90,16 +141,65 @@ export function DraftsPageClient() {
         ))}
       </div>
 
+      {!categoriesLoading && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+            内容栏目
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {filterOptions.map((name) => (
+              <CategoryChip
+                key={name}
+                name={name}
+                active={categoryFilter === name}
+                count={name === "全部" ? (projects ?? []).length : categoryCounts[name]}
+                onClick={() => setCategoryFilter(name)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-on-surface-variant">
+        自定义栏目请在{" "}
+        <Link href="/settings" className="font-semibold text-primary underline">
+          设置
+        </Link>{" "}
+        中管理。
+      </p>
+
       {error ? (
         <LoadError message={error} onRetry={() => void reload()} />
       ) : loading ? (
         <p className="text-sm text-on-surface-variant/50">加载中...</p>
+      ) : filtered.length === 0 ? (
+        <p className="text-sm text-on-surface-variant/50">
+          {categoryFilter !== "全部" ? `「${categoryFilter}」栏目下暂无草稿。` : "暂无草稿。"}
+        </p>
       ) : (
         <div className="space-y-4">
           {filtered.map((project) => (
             <div key={project.id} className="rounded-2xl border border-outline-variant/30 bg-surface-container-lowest p-5">
               <div className="flex items-start justify-between gap-4">
-                <div>
+                <div className="min-w-0 flex-1">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    {project.content_pillar ? (
+                      <span className="rounded bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">
+                        {project.content_pillar}
+                      </span>
+                    ) : (
+                      <span className="rounded bg-on-surface-variant/5 px-2 py-0.5 text-[11px] text-on-surface-variant">
+                        未分类
+                      </span>
+                    )}
+                    <CategoryPicker
+                      categories={categories}
+                      value={project.content_pillar ?? ""}
+                      onChange={(name) => void updateProjectCategory(project, name)}
+                      size="sm"
+                      className={updatingCategoryId === project.id ? "opacity-50" : ""}
+                    />
+                  </div>
                   <Link href={`/create/${project.id}`} className="font-headline text-lg font-medium hover:text-primary">
                     {project.title}
                   </Link>

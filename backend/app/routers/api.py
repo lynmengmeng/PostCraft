@@ -39,6 +39,9 @@ from app.models.schemas import (
     TopicStats,
     TopicUpdate,
     TrialMetricsSummary,
+    ContentCategory,
+    ContentCategoryCreate,
+    ContentCategoriesResponse,
     ChatMessage,
     RiskWarningItem,
     WechatContent,
@@ -59,7 +62,14 @@ from app.services.image_generator import ImageGenerator
 from app.services.llm_client import LLMClient
 from app.services.pipeline import ContentPipeline
 from app.services.skill_loader import SkillLoader
-from app.services.repository import inspiration_repo, project_repo, style_repo, topic_repo
+from app.services.repository import (
+    category_repo,
+    inspiration_repo,
+    project_repo,
+    style_repo,
+    sync_content_pillar,
+    topic_repo,
+)
 from app.services.xiaohongshu_assets import (
     generate_xiaohongshu_carousel,
     sync_xiaohongshu_from_assets,
@@ -147,11 +157,14 @@ def list_projects(db: Session = Depends(get_db)) -> list[ContentProject]:
 
 @protected_router.post("/projects", response_model=ContentProject)
 def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> ContentProject:
+    topic_meta = payload.topic_meta or TopicMeta()
+    if payload.content_pillar:
+        topic_meta.content_pillar = payload.content_pillar
     project = ContentProject(
         id=new_id(),
         title=payload.title or (payload.inspiration[:24] or "未命名项目"),
         inspiration=payload.inspiration,
-        topic_meta=payload.topic_meta or TopicMeta(),
+        topic_meta=topic_meta,
         content_pillar=payload.content_pillar,
     )
     return _save_project(db, project)
@@ -189,6 +202,8 @@ def update_project(
                 project.platforms["douyin"] = DouyinContent.model_validate(value)
     for key, value in data.items():
         setattr(project, key, value)
+    if "content_pillar" in data:
+        sync_content_pillar(project, data["content_pillar"] or "")
     if "cover_assets" in data and data["cover_assets"] is not None:
         project.cover_assets = [CoverAsset.model_validate(item) for item in data["cover_assets"]]
     if wechat_updated:
@@ -324,6 +339,8 @@ def fact_check(project_id: str, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(status_code=404, detail="Project not found")
     style = style_repo.get(db, **_scope())
     warnings = scan_project(project, style.banned_phrases)
+    project.risk_warnings = [RiskWarningItem.model_validate(item) for item in warnings]
+    _save_project(db, project)
     return {"warnings": warnings}
 
 
@@ -340,6 +357,7 @@ async def _chat_once(
         if deltas is not None:
             deltas.append(text)
 
+    categories = category_repo.list_all(db, **_scope())
     updated, patch, assistant = await orchestrator.handle_message(
         project,
         payload.message,
@@ -349,6 +367,7 @@ async def _chat_once(
         action=payload.action or None,
         target_platforms=payload.target_platforms,
         attachment_urls=payload.attachment_urls or None,
+        content_categories=categories,
     )
     saved = _save_project(db, updated)
     return {
@@ -578,15 +597,22 @@ async def generate_asset_image(
     is_cover = after_paragraph is None or after_paragraph < 0 or slot == 0
     is_xhs = existing.platform == "xiaohongshu"
     aspect = "xhs" if is_xhs or not is_cover else "wechat"
-    prompt = existing.prompt or "纪实风格，暖色生活场景，真实自然，不要明显 AI 感"
+    if is_xhs:
+        from app.services.xiaohongshu_assets import resolve_xhs_generation_prompt
+
+        prompt = resolve_xhs_generation_prompt(project, existing)
+    else:
+        prompt = existing.prompt or "纪实风格，暖色生活场景，真实自然，不要明显 AI 感"
     generator = ImageGenerator(get_settings())
     image_url = await generator.generate(prompt, aspect=aspect)
+    asset_source = "placeholder" if generator.last_was_placeholder else "generated"
 
     assets[slot] = CoverAsset(
         **{
             **existing.model_dump(),
             "image_url": image_url,
-            "source": "generated",
+            "prompt": prompt,
+            "source": asset_source,
         }
     )
 
@@ -607,6 +633,7 @@ async def generate_asset_image(
 async def generate_xiaohongshu_carousel_images(
     project_id: str,
     force: bool = False,
+    plan_only: bool = False,
     db: Session = Depends(get_db),
 ) -> ContentProject:
     project = project_repo.get_project(db, project_id, **_scope())
@@ -614,15 +641,20 @@ async def generate_xiaohongshu_carousel_images(
         raise HTTPException(status_code=404, detail="Project not found")
 
     settings = get_settings()
-    generator = ImageGenerator(settings)
     pipeline = ContentPipeline(LLMClient(settings), SkillLoader(settings))
     try:
-        project, _generated = await generate_xiaohongshu_carousel(
-            project,
-            generator,
-            pipeline,
-            force=force,
-        )
+        if plan_only:
+            from app.services.xiaohongshu_assets import ensure_xiaohongshu_carousel_assets
+
+            project.cover_assets = ensure_xiaohongshu_carousel_assets(project, pipeline)
+        else:
+            generator = ImageGenerator(settings)
+            project, _generated = await generate_xiaohongshu_carousel(
+                project,
+                generator,
+                pipeline,
+                force=force,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -954,19 +986,32 @@ def inspiration_to_topic(inspiration_id: str, db: Session = Depends(get_db)) -> 
     if not inspiration:
         raise HTTPException(status_code=404, detail="Inspiration not found")
 
+    topic_title = inspiration.content[:64]
+    if inspiration.trend_snapshot and inspiration.trend_snapshot.title.strip():
+        topic_title = inspiration.trend_snapshot.title.strip()[:64]
+    elif inspiration.content.strip():
+        topic_title = inspiration.content.strip().splitlines()[0][:64]
+
     topic = Topic(
-        title=inspiration.content[:40],
+        title=topic_title,
         inspiration=inspiration.content,
         direction="社会观察",
         tone="温和共情",
         content_pillar=inspiration.tags[0] if inspiration.tags else "",
+        trend_snapshot=inspiration.trend_snapshot,
     )
     saved_topic = topic_repo.create(db, topic, **_scope())
+    pillar = saved_topic.content_pillar
     project = ContentProject(
         id=new_id(),
         title=saved_topic.title,
         inspiration=saved_topic.inspiration,
-        topic_meta=TopicMeta(direction=saved_topic.direction, tone=saved_topic.tone),
+        topic_meta=TopicMeta(
+            direction=saved_topic.direction,
+            tone=saved_topic.tone,
+            content_pillar=pillar,
+        ),
+        content_pillar=pillar,
     )
     saved_project = _save_project(db, project)
     return {
@@ -1075,6 +1120,32 @@ def update_style_profile(
     db: Session = Depends(get_db),
 ) -> AuthorStyleProfile:
     return style_repo.save(db, payload, **_scope())
+
+
+@protected_router.get("/content-categories", response_model=ContentCategoriesResponse)
+def list_content_categories(db: Session = Depends(get_db)) -> ContentCategoriesResponse:
+    return ContentCategoriesResponse(categories=category_repo.list_all(db, **_scope()))
+
+
+@protected_router.post("/content-categories", response_model=ContentCategory)
+def create_content_category(
+    payload: ContentCategoryCreate,
+    db: Session = Depends(get_db),
+) -> ContentCategory:
+    try:
+        return category_repo.add_custom(db, payload, **_scope())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@protected_router.delete("/content-categories/{category_id}")
+def delete_content_category(category_id: str, db: Session = Depends(get_db)) -> dict[str, bool]:
+    try:
+        if not category_repo.delete_custom(db, category_id, **_scope()):
+            raise HTTPException(status_code=404, detail="Category not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
 
 
 router.include_router(public_router)

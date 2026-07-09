@@ -1,8 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
+import { CategoryManager } from "@/components/content/CategoryManager";
 import { LoadError } from "@/components/ui/LoadError";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
+import { useContentCategories } from "@/hooks/useContentCategories";
 import { api } from "@/lib/api";
 import type { AuthorStyleProfile } from "@/lib/types";
 
@@ -10,6 +13,12 @@ export default function SettingsPage() {
   const { data: profile, error, loading, reload, setData: setProfile } = useBackendQuery(() =>
     api.getStyleProfile(),
   );
+  const {
+    categories,
+    addCategory,
+    removeCategory,
+    reload: reloadCategories,
+  } = useContentCategories();
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState("");
 
@@ -122,12 +131,29 @@ export default function SettingsPage() {
         {saved && <span className="ml-3 text-sm text-primary">已保存</span>}
         {saveError && <p className="text-sm text-error">{saveError}</p>}
       </div>
+
+      <CategoryManager
+        categories={categories}
+        onAdd={async (payload) => {
+          await addCategory(payload);
+          await reloadCategories();
+        }}
+        onRemove={async (id) => {
+          await removeCategory(id);
+          await reloadCategories();
+        }}
+      />
+
       <div className="rounded-2xl border border-dashed border-outline-variant bg-surface-container-low p-5 text-sm text-on-surface-variant">
         <p className="font-medium">LLM 配置说明</p>
         <p className="mt-2">
           在后端读取根目录 <code>.env</code>，支持 <code>DEEPSEEK_API_KEY</code> 与{" "}
-          <code>OPENAI_API_KEY</code>（文案 + DALL-E 封面生图）。默认优先使用 DeepSeek，可通过{" "}
-          <code>LLM_PROVIDER</code> 切换。
+          <code>OPENAI_API_KEY</code>（文案 + gpt-image-2 封面生图）。默认优先使用 DeepSeek，可通过{" "}
+          <code>LLM_PROVIDER</code> 切换。栏目写作指引会在{" "}
+          <Link href="/drafts" className="text-primary underline">
+            草稿箱
+          </Link>{" "}
+          与创作室中影响初稿生成。
         </p>
       </div>
     </div>

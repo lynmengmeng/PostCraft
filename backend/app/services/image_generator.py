@@ -28,6 +28,7 @@ class ImageGenerator:
         self.image_model = settings.openai_image_model or "gpt-image-2"
         self.api_key = settings.openai_api_key.strip()
         self.base_url = settings.openai_base_url.strip()
+        self.last_was_placeholder = False
         self.client = (
             build_async_openai_image_client(
                 settings,
@@ -43,11 +44,14 @@ class ImageGenerator:
         return self.client is not None
 
     async def generate(self, prompt: str, *, aspect: CoverAspect = "wechat") -> str:
+        self.last_was_placeholder = False
         if not self.client:
+            self.last_was_placeholder = True
             return self._local_placeholder(aspect)
 
         try:
-            return await self._generate_with_client(self.client, prompt, aspect)
+            url = await self._generate_with_client(self.client, prompt, aspect)
+            return url
         except AuthenticationError as exc:
             message = str(exc)
             if "ip_not_authorized" in message:
@@ -67,6 +71,7 @@ class ImageGenerator:
         except Exception as exc:
             logger.warning("Cover image generation failed (%s), using placeholder", exc)
 
+        self.last_was_placeholder = True
         return self._local_placeholder(aspect)
 
     async def _generate_with_client(

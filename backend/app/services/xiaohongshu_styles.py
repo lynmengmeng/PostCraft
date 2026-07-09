@@ -209,6 +209,106 @@ def styles_reference_block() -> str:
     return "\n".join(lines)
 
 
+def resolve_style_for_xhs(
+    *,
+    title: str = "",
+    body: str = "",
+    cover_style: str = "",
+) -> XiaohongshuCoverStyle:
+    style_id = str(cover_style or "").strip()
+    if style_id:
+        return get_style(style_id)
+    return pick_style_for_content(title, body, "")
+
+
+def series_style_anchor(
+    style: XiaohongshuCoverStyle,
+    *,
+    page_index: int,
+    total_pages: int,
+) -> str:
+    return (
+        f"【系列统一】同一篇小红书笔记共{total_pages}张轮播，"
+        f"这是第{page_index}张；全系列固定「{style.label}」视觉语言："
+        f"{style.visual_prompt}。"
+        "配色、字体、排版、插画/摄影质感必须与其他张保持一致，像同一设计师产出。"
+    )
+
+
+def build_xhs_page_prompt(
+    *,
+    style: XiaohongshuCoverStyle,
+    role: str,
+    headline: str,
+    subheadline: str = "",
+    body_text: str = "",
+    page_index: int = 1,
+    total_pages: int = 1,
+) -> str:
+    if role == "cover" or page_index == 1:
+        core = style.image_prompt(
+            headline=headline[:16],
+            subheadline=subheadline[:24],
+        )
+    else:
+        core = content_page_prompt(
+            headline=headline,
+            body_text=body_text,
+            page_index=page_index,
+            style=style,
+        )
+    anchor = series_style_anchor(style, page_index=page_index, total_pages=total_pages)
+    return f"{core} {anchor}"[:900]
+
+
+def polish_xiaohongshu_body(body: str) -> str:
+    """轻量清洗正文：去多余空行、规范要点标记、控制段落长度。"""
+    text = (body or "").strip()
+    if not text:
+        return text
+
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
+    cleaned: list[str] = []
+    for para in paragraphs:
+        para = re.sub(r"[ \t]+", " ", para)
+        para = re.sub(r"^(?:要点|Tip|tip)\s*[:：]\s*", "【要点】", para, flags=re.I)
+        if len(para) > 280:
+            para = para[:277].rstrip() + "…"
+        cleaned.append(para)
+
+    if len(cleaned) == 1 and len(cleaned[0]) > 220:
+        chunk = cleaned[0]
+        sentences = re.split(r"(?<=[。！？!?])\s*", chunk)
+        rebuilt: list[str] = []
+        current = ""
+        for sentence in sentences:
+            if not sentence.strip():
+                continue
+            if len(current) + len(sentence) <= 120:
+                current += sentence
+            else:
+                if current:
+                    rebuilt.append(current.strip())
+                current = sentence
+        if current:
+            rebuilt.append(current.strip())
+        if len(rebuilt) >= 2:
+            cleaned = rebuilt
+
+    return "\n\n".join(cleaned)
+
+
+def polish_xiaohongshu_title(title: str, body: str = "") -> str:
+    text = (title or "").strip()
+    if text:
+        text = re.sub(r"[#@]{2,}", "", text)
+        text = text[:22]
+    elif body:
+        first = split_body_sections(body)[0] if body else ""
+        text = first[:18].rstrip("，。！？!?") + "…" if len(first) > 18 else first
+    return text or "生活观察"
+
+
 def content_page_prompt(
     *,
     headline: str,
@@ -219,7 +319,8 @@ def content_page_prompt(
     style = style or _fallback_style()
     detail = body_text[:80].replace("\n", " ") if body_text else ""
     return (
-        f"小红书笔记内页第{page_index}张，3:4竖版，与「{style.label}」风格统一。"
+        f"小红书笔记内页第{page_index}张，3:4竖版，延续「{style.label}」系列风格。"
+        f"视觉语言：{style.visual_prompt}。"
         f"简洁背景，突出文字「{headline[:20]}」"
         f"{f'，要点：{detail}' if detail else ''}。"
         "排版清爽、留白充足、真实自然，不要明显 AI 感。"

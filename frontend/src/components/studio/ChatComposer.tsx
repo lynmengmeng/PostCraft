@@ -4,12 +4,18 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { resolveImageUrl } from "@/lib/export";
 import { editableInputClassName, editableInputProps } from "@/lib/editable-input";
+import type { Platform } from "@/lib/types";
+import { platformLabels } from "@/lib/api";
+
+export type ChatScope = "auto" | Platform | "all";
 
 interface ChatComposerProps {
   message: string;
   onMessageChange: (value: string) => void;
   sending: boolean;
   pendingAttachments: string[];
+  chatScope: ChatScope;
+  onChatScopeChange: (scope: ChatScope) => void;
   onSend: (text: string) => Promise<boolean> | boolean;
   onUploadAsset: (file: File) => void;
   onRemoveAttachment: (url: string) => void;
@@ -17,11 +23,21 @@ interface ChatComposerProps {
   onStop: () => void;
 }
 
+const scopeOptions: { key: ChatScope; label: string }[] = [
+  { key: "auto", label: "跟随编辑区" },
+  { key: "wechat", label: platformLabels.wechat },
+  { key: "xiaohongshu", label: platformLabels.xiaohongshu },
+  { key: "douyin", label: platformLabels.douyin },
+  { key: "all", label: "全平台" },
+];
+
 export function ChatComposer({
   message,
   onMessageChange,
   sending,
   pendingAttachments,
+  chatScope,
+  onChatScopeChange,
   onSend,
   onUploadAsset,
   onRemoveAttachment,
@@ -59,6 +75,22 @@ export function ChatComposer({
 
   return (
     <div className={`space-y-3 ${editableInputClassName}`} translate="no">
+      <div className="flex flex-wrap gap-2">
+        {scopeOptions.map(({ key, label }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onChatScopeChange(key)}
+            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+              chatScope === key
+                ? "bg-primary text-on-primary"
+                : "bg-surface-container-low text-on-surface-variant ring-1 ring-outline-variant/30"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       {pendingAttachments.length > 0 && (
         <div className="space-y-2">
           <div className="flex flex-wrap gap-2">

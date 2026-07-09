@@ -50,6 +50,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isAuthPage = pathname === "/login" || pathname === "/register";
   const isSeoLanding = pathname === "/";
   const isCreatePage = pathname.startsWith("/create/");
+  const isToolsPage = pathname === "/tools";
+  const isFixedHeightPage = isCreatePage || isToolsPage;
   // 仅在后端明确关闭鉴权时，创作页才可匿名访问；config 未加载时不放行
   const isPublicCreate = isCreatePage && config?.auth_required === false;
   const isPublicPage = isSeoLanding || isAuthPage || isPublicCreate;
@@ -91,7 +93,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <ShellContext.Provider value={{ zenMode, setZenMode, searchQuery, setSearchQuery }}>
-      <div className={`bg-background ${isCreatePage ? "h-screen overflow-hidden" : "min-h-screen"}`}>
+      <div className={`bg-background ${isFixedHeightPage ? "h-screen overflow-hidden" : "min-h-screen"}`}>
         {/* SideNav */}
         <aside
           className={`fixed left-0 top-0 bottom-0 z-50 flex h-screen w-sidebar flex-col border-r border-outline-variant/30 bg-surface transition-transform duration-500 ${
@@ -228,7 +230,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           className={`transition-[margin] duration-500 ${
             zenMode ? "ml-0" : "ml-sidebar"
           } ${
-            isCreatePage
+            isFixedHeightPage
               ? "flex h-screen flex-col overflow-hidden pt-16"
               : "min-h-screen pt-16"
           }`}

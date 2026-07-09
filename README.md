@@ -10,7 +10,7 @@
 | 后端 | Python FastAPI |
 | 数据库 | SQLite（`data/postcraft.db`） |
 | AI 文案 | DeepSeek / OpenAI（`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`） |
-| AI 配图 | OpenAI DALL-E 3（需配置 `OPENAI_API_KEY`，无 Key 时使用占位图） |
+| AI 配图 | OpenAI gpt-image-2（需配置 `OPENAI_API_KEY`，无 Key 时使用占位图） |
 | Skill 流水线 | `general-writing → humanizer-cn → 各平台 converter` |
 
 ## 快速开始
@@ -86,7 +86,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8082/api
 - **标题**：批量生成 ≥10 个标题，应用至当前平台
 - **配图**：提示词 + DALL-E 生图，同步至小红书 `cover_image` 与预览区
 - **导出**：创作室顶部「导出全部」Markdown，三平台一键复制
-- **草稿箱**：待发布 / 已发布视图、发布记录（含备注）、删除草稿
+- **草稿箱**：内容栏目分类筛选、手动归类、待发布 / 已发布视图、分平台发布记录、删除草稿
 - **作者风格档案**：语气、禁用词、个人素材、各平台默认风格注入流水线 system prompt
 
 未配置 API Key 时，后端自动使用本地 mock 模板，不影响 UI 与流程演示。

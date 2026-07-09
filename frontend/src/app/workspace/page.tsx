@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ProjectSourceBadges } from "@/components/content/ProjectSourceBadges";
 import { useShell } from "@/components/layout/AppShell";
 import { Icon } from "@/components/ui/Icon";
 import { LoadError } from "@/components/ui/LoadError";
@@ -64,6 +65,7 @@ function DraftCard({
               {project.content_pillar}
             </span>
           )}
+          <ProjectSourceBadges project={project} />
           <span
             className={`rounded px-2 py-0.5 text-[11px] font-bold uppercase tracking-tighter ${
               project.status === "ready"
@@ -155,23 +157,53 @@ export default function HomePage() {
   const [selectedCategory, setSelectedCategory] = useState("");
   const [quickInspiration, setQuickInspiration] = useState("");
   const [savingInspiration, setSavingInspiration] = useState(false);
+  const [savingHeroInspiration, setSavingHeroInspiration] = useState(false);
   const [creating, setCreating] = useState(false);
   const [importingDraft, setImportingDraft] = useState(false);
   const [actionError, setActionError] = useState("");
   const [actionInfo, setActionInfo] = useState("");
   const importDraftRef = useRef<HTMLInputElement>(null);
-  const { categories } = useContentCategories();
+  const { categories, findByName } = useContentCategories();
 
   const activeCategory = categories.find((c) => c.name === selectedCategory);
+
+  async function saveHeroInspiration() {
+    if (!inspiration.trim()) return;
+    setSavingHeroInspiration(true);
+    setActionError("");
+    setActionInfo("");
+    try {
+      await api.createInspiration(
+        inspiration.trim(),
+        selectedCategory ? [selectedCategory] : [],
+      );
+      setInspiration("");
+      setActionInfo("已存入灵感库，可在灵感库转选题或直接开始创作。");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "保存失败");
+    } finally {
+      setSavingHeroInspiration(false);
+    }
+  }
 
   async function createFromInspiration() {
     if (!inspiration.trim()) return;
     setCreating(true);
     setActionError("");
     try {
+      const cat = selectedCategory ? findByName(selectedCategory) : undefined;
       const project = await api.createProject({
         inspiration: inspiration.trim(),
         content_pillar: selectedCategory,
+        topic_meta: cat
+          ? {
+              direction: "社会观察",
+              tone: cat.default_tone || "温和共情",
+              audience: "普通家庭",
+              platforms: ["wechat", "xiaohongshu", "douyin"],
+              content_pillar: selectedCategory,
+            }
+          : undefined,
       });
       router.push(`/create/${project.id}`);
     } catch (err) {
@@ -289,7 +321,7 @@ export default function HomePage() {
                 从灵感到发布
               </h2>
               <p className="text-[15px] text-on-surface-variant/80">
-                把生活观察整理成文章、笔记或视频脚本，通过对话不断打磨至可发布状态。
+                先随手记录灵感，在选题库完善角度后再开写；已有明确方向也可跳过规划。
               </p>
               {llmStatus && (
                 <div className="flex items-center gap-2 pt-2">
@@ -333,25 +365,57 @@ export default function HomePage() {
                   </button>
                 ))}
               </div>
-              {activeCategory?.description && (
-                <p className="text-[13px] text-on-surface-variant/70">{activeCategory.description}</p>
+              {activeCategory && (
+                <div className="space-y-2 rounded-lg bg-surface-container-low/60 px-3 py-2">
+                  {activeCategory.prompt_hint && (
+                    <p className="text-[13px] text-on-surface-variant/70">{activeCategory.prompt_hint}</p>
+                  )}
+                  {(activeCategory.example_topics?.length ?? 0) > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {activeCategory.example_topics.slice(0, 2).map((topic) => (
+                        <button
+                          key={topic}
+                          type="button"
+                          onClick={() => setInspiration(topic)}
+                          className="rounded-full bg-surface px-3 py-1 text-xs text-primary ring-1 ring-primary/20 hover:bg-primary/5"
+                        >
+                          {topic}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <input
                 value={inspiration}
                 onChange={(e) => setInspiration(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && createFromInspiration()}
+                onKeyDown={(e) => e.key === "Enter" && saveHeroInspiration()}
                 placeholder="输入一句话灵感，例如：农村老人重疾增多，可能和劣质商品、环境污染有关"
                 className="min-w-[240px] flex-1 rounded-xl border border-outline-variant/50 bg-surface-container-lowest px-6 py-4 text-[17px] shadow-sm outline-none transition-all placeholder:text-on-surface-variant/40 focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
               <button
                 type="button"
+                onClick={saveHeroInspiration}
+                disabled={savingHeroInspiration}
+                className="flex items-center gap-2 rounded-xl bg-accent-cta px-8 py-4 font-bold text-white shadow-md transition-colors hover:opacity-90 disabled:opacity-50"
+              >
+                {savingHeroInspiration ? "保存中..." : "存入灵感库"}
+              </button>
+              <Link
+                href="/topics"
+                className="flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 px-6 py-4 text-[15px] font-semibold text-primary transition-colors hover:bg-primary/10"
+              >
+                已有选题
+              </Link>
+              <button
+                type="button"
                 onClick={createFromInspiration}
                 disabled={creating}
-                className="flex items-center gap-2 rounded-xl bg-accent-cta px-8 font-bold text-white shadow-md transition-colors hover:opacity-90 disabled:opacity-50"
+                className="rounded-xl px-4 py-4 text-[14px] font-medium text-on-surface-variant underline-offset-2 transition-colors hover:text-primary hover:underline disabled:opacity-50"
               >
-                {creating ? "创建中..." : "开始创作"}
+                {creating ? "创建中..." : "跳过规划，直接开写"}
               </button>
               <input
                 ref={importDraftRef}
@@ -419,10 +483,32 @@ export default function HomePage() {
           )}
 
           {trialMetrics && trialMetrics.total_projects > 0 && (
-            <div className="flex flex-wrap gap-4 rounded-xl border border-outline-variant/30 bg-surface-container-low/40 px-5 py-3 text-xs text-on-surface-variant">
-              <span>完成率 {(trialMetrics.completion_rate * 100).toFixed(0)}%</span>
-              <span>平均对话 {trialMetrics.avg_chat_rounds} 轮</span>
-              <span>多平台采用 {(trialMetrics.multi_platform_rate * 100).toFixed(0)}%</span>
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-4 rounded-xl border border-outline-variant/30 bg-surface-container-low/40 px-5 py-3 text-xs text-on-surface-variant">
+                <span>完成率 {(trialMetrics.completion_rate * 100).toFixed(0)}%</span>
+                <span>平均对话 {trialMetrics.avg_chat_rounds} 轮</span>
+                <span>多平台采用 {(trialMetrics.multi_platform_rate * 100).toFixed(0)}%</span>
+              </div>
+              {(trialMetrics.by_pillar?.length ?? 0) > 0 && (
+                <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low/30 px-5 py-3">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
+                    栏目完成率
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-on-surface-variant">
+                    {trialMetrics.by_pillar
+                      .filter((p) => p.name !== "未分类")
+                      .slice(0, 5)
+                      .map((pillar) => (
+                        <span key={pillar.name}>
+                          {pillar.name}：{pillar.total} 篇
+                          {pillar.total > 0
+                            ? ` · 完成 ${((pillar.completed / pillar.total) * 100).toFixed(0)}%`
+                            : ""}
+                        </span>
+                      ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -471,7 +557,7 @@ export default function HomePage() {
               {loading ? (
                 <p className="text-sm text-on-surface-variant/50">加载中...</p>
               ) : drafts.length === 0 ? (
-                <p className="text-sm text-on-surface-variant/50">还没有草稿，从上方输入灵感开始。</p>
+                <p className="text-sm text-on-surface-variant/50">还没有草稿，先存入灵感库或从选题库进入创作室。</p>
               ) : (
                 <div className="space-y-3">
                   {drafts.slice(0, 5).map((project) => (

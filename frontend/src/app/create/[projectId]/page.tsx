@@ -14,6 +14,8 @@ import { StudioHeaderActions } from "@/components/studio/StudioHeaderActions";
 import { StudioMobileTabs } from "@/components/studio/StudioMobileTabs";
 import { StudioTitleEditor } from "@/components/studio/StudioTitleEditor";
 import { CategoryPicker } from "@/components/content/CategoryPicker";
+import { ProjectSourceBadges } from "@/components/content/ProjectSourceBadges";
+import { TrendAnalysisPanel } from "@/components/tools/TrendAnalysisPanel";
 import { useContentCategories } from "@/hooks/useContentCategories";
 import {
   PreviewPanel,
@@ -114,7 +116,7 @@ export default function CreateStudioPage() {
   const [generatingXhsCarousel, setGeneratingXhsCarousel] = useState(false);
   const [actionInfo, setActionInfo] = useState("");
   const [autoDraftPending, setAutoDraftPending] = useState(false);
-  const { categories } = useContentCategories();
+  const { categories, findByName } = useContentCategories();
   const [chatScope, setChatScope] = useState<ChatScope>("auto");
 
   const selectEditorTab = useCallback((tab: EditorTab) => {
@@ -489,9 +491,21 @@ export default function CreateStudioPage() {
 
   async function saveProjectCategory(content_pillar: string) {
     if (!project) return;
+    const previous = project.content_pillar ?? "";
+    if (content_pillar === previous) return;
+    const hadDraft = Boolean(project.draft?.trim() || project.humanized?.trim());
+    let regenerate = false;
+    if (hadDraft && content_pillar) {
+      regenerate = window.confirm(
+        `切换为「${content_pillar}」栏目。\n\n确定 = 按新栏目重写初稿\n取消 = 仅更新栏目标签`,
+      );
+    }
     try {
       const updated = await api.updateProject(project.id, { content_pillar });
       setProject(updated);
+      if (regenerate) {
+        await sendChat("按新栏目重写观察型初稿", updated, { action: "generate_draft" });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "分类保存失败");
     }
@@ -900,6 +914,8 @@ export default function CreateStudioPage() {
     preview: previewPanel,
   };
 
+  const activeCategory = categories.find((c) => c.name === (project?.content_pillar ?? ""));
+
   return (
     <div
       className={`flex flex-col overflow-hidden bg-background ${
@@ -926,10 +942,64 @@ export default function CreateStudioPage() {
                 size="sm"
                 showHint
               />
+              <ProjectSourceBadges project={project} />
               <p className="truncate text-xs text-on-surface-variant">
                 {project.inspiration.slice(0, 60)}
               </p>
             </div>
+            {(project.source_url || project.image_url) && (
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-on-surface-variant">
+                {project.source_url && (
+                  <a
+                    href={project.source_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-primary hover:underline"
+                  >
+                    <Icon name="link" className="text-[14px]" />
+                    参考链接
+                  </a>
+                )}
+                {project.image_url && (
+                  <a
+                    href={resolveImageUrl(project.image_url)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-primary hover:underline"
+                  >
+                    <Icon name="image" className="text-[14px]" />
+                    参考截图
+                  </a>
+                )}
+              </div>
+            )}
+            {project.trend_snapshot?.analysis?.why_hot && (
+              <details className="mt-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2 text-xs text-on-surface-variant">
+                <summary className="cursor-pointer font-semibold text-primary">热点分析背景</summary>
+                <div className="mt-2">
+                  <TrendAnalysisPanel analysis={project.trend_snapshot.analysis} compactHeader />
+                </div>
+              </details>
+            )}
+            {activeCategory &&
+              (activeCategory.platform_hints.wechat ||
+                activeCategory.platform_hints.xiaohongshu ||
+                activeCategory.platform_hints.douyin) && (
+                <details className="mt-1 text-xs text-on-surface-variant/70">
+                  <summary className="cursor-pointer text-primary/80">三平台风格差异</summary>
+                  <ul className="mt-1 space-y-0.5 pl-2">
+                    {activeCategory.platform_hints.wechat && (
+                      <li>公众号：{activeCategory.platform_hints.wechat}</li>
+                    )}
+                    {activeCategory.platform_hints.xiaohongshu && (
+                      <li>小红书：{activeCategory.platform_hints.xiaohongshu}</li>
+                    )}
+                    {activeCategory.platform_hints.douyin && (
+                      <li>抖音：{activeCategory.platform_hints.douyin}</li>
+                    )}
+                  </ul>
+                </details>
+              )}
           </div>
         </div>
         <StudioHeaderActions

@@ -151,10 +151,20 @@ class PublishRecord(BaseModel):
     note: str = ""
 
 
+ProjectSourceType = Literal["direct", "topic", "inspiration", "trend"]
+TopicStatus = Literal["open", "writing", "done"]
+
+
 class ContentProject(BaseModel):
     id: str = Field(default_factory=new_id)
     title: str = "未命名项目"
     inspiration: str = ""
+    topic_id: str | None = None
+    topic_title: str = ""
+    source_type: ProjectSourceType = "direct"
+    source_url: str = ""
+    image_url: str = ""
+    trend_snapshot: "TrendInspirationSnapshot | None" = None
     topic_meta: TopicMeta = Field(default_factory=TopicMeta)
     draft: str = ""
     humanized: str = ""
@@ -204,7 +214,12 @@ class Topic(BaseModel):
     priority: Literal["soon", "later"] = "soon"
     series: str = ""
     inspiration: str = ""
+    source_type: Literal["direct", "manual", "screenshot", "link", "trend"] = "direct"
+    source_url: str = ""
+    image_url: str = ""
     trend_snapshot: TrendInspirationSnapshot | None = None
+    project_id: str | None = None
+    status: TopicStatus = "open"
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -218,11 +233,24 @@ class AuthorStyleProfile(BaseModel):
     platform_defaults: dict[str, str] = Field(default_factory=dict)
 
 
+class CategoryPlatformHints(BaseModel):
+    wechat: str = ""
+    xiaohongshu: str = ""
+    douyin: str = ""
+
+
 class ContentCategory(BaseModel):
     id: str
     name: str
     description: str = ""
     prompt_hint: str = ""
+    structure_hint: str = ""
+    platform_hints: CategoryPlatformHints = Field(default_factory=CategoryPlatformHints)
+    title_style: str = ""
+    cover_mood: str = ""
+    default_layout: WechatLayoutPreset = "classic"
+    default_tone: str = "温和共情"
+    example_topics: list[str] = Field(default_factory=list)
     builtin: bool = False
 
 
@@ -230,6 +258,26 @@ class ContentCategoryCreate(BaseModel):
     name: str
     description: str = ""
     prompt_hint: str = ""
+    structure_hint: str = ""
+    platform_hints: CategoryPlatformHints | None = None
+    title_style: str = ""
+    cover_mood: str = ""
+    default_layout: WechatLayoutPreset = "classic"
+    default_tone: str = "温和共情"
+    example_topics: list[str] = Field(default_factory=list)
+
+
+class ContentCategoryUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    prompt_hint: str | None = None
+    structure_hint: str | None = None
+    platform_hints: CategoryPlatformHints | None = None
+    title_style: str | None = None
+    cover_mood: str | None = None
+    default_layout: WechatLayoutPreset | None = None
+    default_tone: str | None = None
+    example_topics: list[str] | None = None
 
 
 class ContentCategoriesResponse(BaseModel):
@@ -327,12 +375,20 @@ class CascadeRequest(BaseModel):
     stream: bool = False
 
 
+class PillarMetrics(BaseModel):
+    name: str
+    total: int
+    completed: int
+    multi_platform_rate: float
+
+
 class TrialMetricsSummary(BaseModel):
     total_projects: int
     completed_projects: int
     completion_rate: float
     avg_chat_rounds: float
     multi_platform_rate: float
+    by_pillar: list[PillarMetrics] = Field(default_factory=list)
 
 
 class InspirationCreate(BaseModel):
@@ -376,6 +432,11 @@ class TopicUpdate(BaseModel):
     priority: Literal["soon", "later"] | None = None
     series: str | None = None
     inspiration: str | None = None
+    source_type: Literal["direct", "manual", "screenshot", "link", "trend"] | None = None
+    source_url: str | None = None
+    image_url: str | None = None
+    project_id: str | None = None
+    status: TopicStatus | None = None
 
 
 class TopicStats(BaseModel):
@@ -397,6 +458,10 @@ class TopicCreate(BaseModel):
     priority: Literal["soon", "later"] = "soon"
     series: str = ""
     inspiration: str = ""
+    source_type: Literal["direct", "manual", "screenshot", "link", "trend"] = "direct"
+    source_url: str = ""
+    image_url: str = ""
+    trend_snapshot: TrendInspirationSnapshot | None = None
 
 
 class LLMStatus(BaseModel):

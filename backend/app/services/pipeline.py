@@ -16,9 +16,15 @@ from app.models.schemas import (
     XiaohongshuImagePage,
 )
 from app.services.chat_context import build_chat_context_block
+from app.services.creation_context import build_creation_context_block, platform_tip_block
 from app.services.fact_check import scan_text
 from app.services.llm_client import LLMClient
-from app.services.repository import parse_json_from_text, resolve_prompt_hint
+from app.services.repository import (
+    category_context_block,
+    parse_json_from_text,
+    resolve_category,
+    resolve_prompt_hint,
+)
 from app.services.skill_loader import SkillLoader
 from app.services.wechat_html import build_formatted_html, finalize_wechat_content
 from app.services.wechat_assets import (
@@ -157,6 +163,7 @@ class ContentPipeline:
         target_platforms: list[str],
         on_delta: StreamCallback = None,
         with_titles: bool = False,
+        content_categories: list[ContentCategory] | None = None,
     ) -> dict[str, Any]:
         humanized = (project.humanized or project.draft or "").strip()
         if not humanized:
@@ -175,12 +182,19 @@ class ContentPipeline:
                 project,
                 style_profile,
                 humanized,
+                content_categories=content_categories,
             )
 
         if with_titles or set(targets) == set(ALL_PLATFORMS) or not project.titles:
             if on_delta:
                 await on_delta("正在生成标题备选…")
-            patch["titles"] = await self._generate_titles(project, style_profile, humanized, count=20)
+            patch["titles"] = await self._generate_titles(
+                project,
+                style_profile,
+                humanized,
+                count=20,
+                content_categories=content_categories,
+            )
 
         return patch
 
@@ -190,19 +204,27 @@ class ContentPipeline:
         style_profile: AuthorStyleProfile,
         message: str = "",
         on_delta: StreamCallback = None,
+        content_categories: list[ContentCategory] | None = None,
     ) -> dict[str, Any]:
-        draft_patch = await self.generate_draft(project, style_profile, message, on_delta)
+        draft_patch = await self.generate_draft(
+            project, style_profile, message, on_delta, content_categories=content_categories
+        )
+        updated = project.model_copy(
+            update={"draft": draft_patch["draft"], "humanized": draft_patch["humanized"]}
+        )
         platform_patch = await self.generate_platforms(
-            project.model_copy(update={"draft": draft_patch["draft"], "humanized": draft_patch["humanized"]}),
+            updated,
             style_profile,
             ALL_PLATFORMS,
             on_delta,
             with_titles=True,
+            content_categories=content_categories,
         )
         cover_assets = await self._generate_cover_prompts(
-            project,
+            updated,
             style_profile,
             {k.replace("platforms.", ""): v for k, v in platform_patch.items() if k.startswith("platforms.")},
+            content_categories=content_categories,
         )
         return {
             **draft_patch,
@@ -239,6 +261,7 @@ class ContentPipeline:
         )
         user = (
             build_chat_context_block(project)
+            + build_creation_context_block(project)
             + self._style_block(style_profile, ALL_PLATFORMS)
             + f"\n\n选题: {project.inspiration[:500]}\n"
             f"元信息: {json.dumps(project.topic_meta.model_dump(mode='json'), ensure_ascii=False)}\n\n"
@@ -276,6 +299,7 @@ class ContentPipeline:
 
         user = (
             build_chat_context_block(project)
+            + build_creation_context_block(project)
             + self._style_block(style_profile, targets)
             + f"\n\n选题: {project.inspiration[:500]}\n"
             f"元信息: {json.dumps(project.topic_meta.model_dump(mode='json'), ensure_ascii=False)}\n\n"
@@ -298,6 +322,7 @@ class ContentPipeline:
                 project,
                 style_profile,
                 updated_humanized,
+                content_categories=content_categories,
             )
 
         return patch
@@ -308,6 +333,7 @@ class ContentPipeline:
         style_profile: AuthorStyleProfile,
         target_platforms: list[str],
         on_delta: StreamCallback = None,
+        content_categories: list[ContentCategory] | None = None,
     ) -> dict[str, Any]:
         humanized = project.humanized or project.draft or project.inspiration
         if not humanized.strip():
@@ -324,6 +350,7 @@ class ContentPipeline:
                 project,
                 style_profile,
                 humanized,
+                content_categories=content_categories,
             )
             if platform == "wechat" and project.cover_assets:
                 payload = finalize_wechat_content(
@@ -506,8 +533,10 @@ class ContentPipeline:
             "排版要求：用 ## 分节；段落间空一行；并列内容用有序/无序列表；避免整篇长段落。"
         )
         chat_block = build_chat_context_block(project) if include_chat_context else ""
+        context_block = build_creation_context_block(project)
         user = (
             chat_block
+            + context_block
             + f"选题/灵感: {project.inspiration}\n"
             f"元信息: {json.dumps(project.topic_meta.model_dump(mode='json'), ensure_ascii=False)}\n"
             f"任务: {task}\n\n"
@@ -534,16 +563,17 @@ class ContentPipeline:
         pillar = (project.content_pillar or project.topic_meta.content_pillar or "").strip()
         if not pillar:
             return ""
-        hint = resolve_prompt_hint(pillar, content_categories)
-        lines = [f"\n\n【内容栏目 — {pillar}】"]
-        if hint:
-            lines.append(f"栏目写作指引: {hint}")
-        merged = list(content_categories or [])
-        for cat in merged:
-            if cat.name == pillar and cat.description:
-                lines.append(f"栏目说明: {cat.description}")
-                break
-        return "\n".join(lines) + "\n"
+        cat = resolve_category(pillar, content_categories)
+        if cat:
+            block = category_context_block(cat)
+            if cat.prompt_hint:
+                return block.replace(
+                    f"【内容栏目 — {cat.name}】",
+                    f"【内容栏目 — {cat.name}】\n栏目写作指引: {cat.prompt_hint}",
+                    1,
+                )
+            return block
+        return f"\n\n【内容栏目 — {pillar}】\n"
 
     def _constraints_block(self, constraints: list[str]) -> str:
         if not constraints:
@@ -581,12 +611,21 @@ class ContentPipeline:
             content_categories=content_categories,
         )
 
+    def _resolve_project_category(
+        self,
+        project: ContentProject,
+        content_categories: list[ContentCategory] | None = None,
+    ) -> ContentCategory | None:
+        pillar = (project.content_pillar or project.topic_meta.content_pillar or "").strip()
+        return resolve_category(pillar, content_categories)
+
     async def _run_converter(
         self,
         skill_name: str,
         project: ContentProject,
         style_profile: AuthorStyleProfile,
         humanized: str,
+        content_categories: list[ContentCategory] | None = None,
     ) -> dict[str, Any]:
         skill = self.skills.load(skill_name)
         if skill_name == "douyin-converter":
@@ -611,17 +650,25 @@ class ContentPipeline:
             )
 
         platform_key = skill_name.replace("-converter", "")
+        cat = self._resolve_project_category(project, content_categories)
+        category_block = category_context_block(cat, [platform_key]) if cat else ""
         system = (
             f"{skill}\n\n"
+            f"{category_block}"
             f"{self._style_block(style_profile, [platform_key])}\n\n"
             f"输出严格 JSON，格式: {schema_hint}\n\n"
             f"{self._formatting_rules(skill_name)}"
         )
-        user = f"中间体内容:\n{humanized}"
+        user = f"中间体内容:\n{humanized}{platform_tip_block(project, platform_key)}"
         raw = await self.llm.complete(system, user, json_mode=True)
         payload = parse_json_from_text(raw)
         if skill_name == "wechat-converter":
             payload = self._normalize_wechat_payload(payload)
+            if cat:
+                theme = payload.get("style_theme") or {}
+                if isinstance(theme, dict) and not theme.get("layout_preset"):
+                    theme["layout_preset"] = cat.default_layout
+                    payload["style_theme"] = theme
         if skill_name == "xiaohongshu-converter":
             payload = self._normalize_xiaohongshu_payload(payload)
         return payload
@@ -632,15 +679,20 @@ class ContentPipeline:
         style_profile: AuthorStyleProfile,
         humanized: str,
         count: int = 12,
+        content_categories: list[ContentCategory] | None = None,
     ) -> list[dict[str, Any]]:
+        cat = self._resolve_project_category(project, content_categories)
+        title_style_hint = cat.title_style if cat and cat.title_style else "搜索问题型为主，兼顾情绪共鸣"
+        category_block = self._category_block(project, content_categories)
         system = (
-            "你是中文标题策划，专注公众号冷启动搜索型标题。输出 JSON："
-            '{"titles":[{"text":"","style":"搜索问题型|人群痛点型|误区纠正型|对比选择型|结果承诺型"}]}\n'
-            "要求：标题含具体场景/人群/动作词，像用户会搜索的问题；"
-            "避免空泛词「提高」「全面」「指南」「必看」；不用震惊体。"
+            "你是中文标题策划。输出 JSON："
+            '{"titles":[{"text":"","style":"搜索问题型|人群痛点型|误区纠正型|对比选择型|结果承诺型|情绪共鸣型|故事型"}]}\n'
+            f"栏目标题风格要求: {title_style_hint}\n"
+            "要求：标题含具体场景/人群/动作词；避免空泛词「提高」「全面」「指南」「必看」；不用震惊体。"
         )
         user = (
-            self._style_block(style_profile, ALL_PLATFORMS)
+            category_block
+            + self._style_block(style_profile, ALL_PLATFORMS)
             + f"\n请生成 {count} 个标题，避免: {style_profile.banned_phrases}\n\n"
             + humanized[:2000]
         )
@@ -658,27 +710,50 @@ class ContentPipeline:
         project: ContentProject,
         style_profile: AuthorStyleProfile,
         platforms: dict[str, Any],
+        content_categories: list[ContentCategory] | None = None,
     ) -> list[dict[str, Any]]:
         assets: list[dict[str, Any]] = []
+        cat = self._resolve_project_category(project, content_categories)
+        cover_mood = cat.cover_mood if cat and cat.cover_mood else ""
 
         if "wechat" in platforms:
-            assets.extend(self._generate_wechat_cover_assets(platforms.get("wechat", {}), project))
+            assets.extend(
+                self._generate_wechat_cover_assets(
+                    platforms.get("wechat", {}),
+                    project,
+                    cover_mood=cover_mood,
+                )
+            )
 
         if "xiaohongshu" in platforms:
             xhs = platforms.get("xiaohongshu", {})
             if isinstance(xhs, dict) and xhs.get("body"):
-                assets.extend(self._generate_xiaohongshu_carousel_assets(xhs, project))
+                assets.extend(
+                    self._generate_xiaohongshu_carousel_assets(
+                        xhs,
+                        project,
+                        cover_mood=cover_mood,
+                    )
+                )
 
         return assets
+
+    def _default_image_prompt(self, cover_mood: str = "") -> str:
+        base = "纪实风格，暖色生活场景，真实自然，不要明显 AI 感"
+        if cover_mood:
+            return f"{cover_mood}。{base}"
+        return base
 
     def _generate_wechat_cover_assets(
         self,
         wechat: dict[str, Any],
         project: ContentProject,
+        cover_mood: str = "",
     ) -> list[dict[str, Any]]:
         wechat_title = wechat.get("title", project.title)
         placements = wechat.get("image_placements") or []
         assets: list[dict[str, Any]] = []
+        default_prompt = self._default_image_prompt(cover_mood)
 
         if placements:
             for placement in placements:
@@ -686,7 +761,7 @@ class ContentPipeline:
                     p = WechatImagePlacement.model_validate(placement)
                 else:
                     p = placement
-                prompt = p.prompt or "纪实风格，暖色生活场景，真实自然，不要明显 AI 感"
+                prompt = p.prompt or default_prompt
                 asset = CoverAsset(
                     platform="wechat",
                     headline=str(wechat_title)[:20],
@@ -700,11 +775,14 @@ class ContentPipeline:
                 assets.append(asset.model_dump(mode="json"))
         else:
             headline, subheadline = self._cover_copy_from_wechat(wechat, str(wechat_title))
+            prompt = default_prompt
+            if cover_mood:
+                prompt = f"简洁纪实风格，横版构图 2.35:1，{cover_mood}，少装饰，不要明显 AI 感"
             asset = CoverAsset(
                 platform="wechat",
                 headline=headline,
                 subheadline=subheadline,
-                prompt="简洁纪实风格，暖色生活场景，横版构图 2.35:1，主体居中便于方形裁切，少装饰，不要明显 AI 感",
+                prompt=prompt,
                 after_paragraph=-1,
                 asset_index=0,
                 source="placeholder",
@@ -877,6 +955,7 @@ class ContentPipeline:
         self,
         xhs: dict[str, Any],
         project: ContentProject,
+        cover_mood: str = "",
     ) -> list[dict[str, Any]]:
         pages = xhs.get("image_pages") or []
         style = resolve_style_for_xhs(
@@ -909,6 +988,8 @@ class ContentPipeline:
                 page_index=offset + 1,
                 total_pages=total_pages,
             )
+            if cover_mood:
+                prompt = f"{cover_mood}。{prompt}"
             asset = CoverAsset(
                 platform="xiaohongshu",
                 headline=headline or str(xhs.get("title") or "")[:20],

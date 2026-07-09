@@ -29,12 +29,27 @@ def test_content_categories_defaults(client: TestClient) -> None:
 def test_content_categories_custom_crud(client: TestClient) -> None:
     create = client.post(
         "/api/content-categories",
-        json={"name": "测试自定义栏目", "description": "仅用于测试"},
+        json={
+            "name": "测试自定义栏目",
+            "description": "仅用于测试",
+            "structure_hint": "测试结构",
+            "title_style": "测试标题",
+        },
     )
     assert create.status_code == 200
     created = create.json()
     assert created["name"] == "测试自定义栏目"
     assert created["builtin"] is False
+    assert created["structure_hint"] == "测试结构"
+
+    patch = client.patch(
+        f"/api/content-categories/{created['id']}",
+        json={"prompt_hint": "更新后的写作指引", "cover_mood": "测试封面气质"},
+    )
+    assert patch.status_code == 200
+    updated = patch.json()
+    assert updated["prompt_hint"] == "更新后的写作指引"
+    assert updated["cover_mood"] == "测试封面气质"
 
     listed = client.get("/api/content-categories")
     assert listed.status_code == 200
@@ -44,6 +59,17 @@ def test_content_categories_custom_crud(client: TestClient) -> None:
     deleted = client.delete(f"/api/content-categories/{created['id']}")
     assert deleted.status_code == 200
     assert deleted.json()["ok"] is True
+
+
+def test_content_categories_builtin_override(client: TestClient) -> None:
+    patch = client.patch(
+        "/api/content-categories/weekend-out",
+        json={"prompt_hint": "用户自定义周末出走指引"},
+    )
+    assert patch.status_code == 200
+    data = patch.json()
+    assert data["prompt_hint"] == "用户自定义周末出走指引"
+    assert data["builtin"] is True
 
 
 def test_project_with_content_pillar(client: TestClient) -> None:

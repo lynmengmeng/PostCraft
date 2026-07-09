@@ -4,30 +4,17 @@ import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useShell } from "@/components/layout/AppShell";
 import { Icon } from "@/components/ui/Icon";
-import { CategoryPicker } from "@/components/content/CategoryPicker";
-import { TrendAnalysisDetailModal } from "@/components/tools/TrendAnalysisDetailModal";
 import { LoadError } from "@/components/ui/LoadError";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
-import { useContentCategories } from "@/hooks/useContentCategories";
 import { api } from "@/lib/api";
 import { resolveImageUrl } from "@/lib/export";
-import type { Inspiration, TrendInspirationSnapshot } from "@/lib/types";
+import type { Inspiration } from "@/lib/types";
 
 const sourceLabels: Record<Inspiration["source_type"], string> = {
   manual: "手动录入",
   screenshot: "截图",
   link: "网页剪藏",
 };
-
-const sourceFilterOptions: Array<{
-  key: "全部" | Inspiration["source_type"];
-  label: string;
-}> = [
-  { key: "全部", label: "全部来源" },
-  { key: "manual", label: "手动录入" },
-  { key: "screenshot", label: "截图" },
-  { key: "link", label: "网页剪藏" },
-];
 
 type SortKey = "newest" | "oldest";
 type CreateMode = "manual" | "screenshot" | "link";
@@ -63,16 +50,12 @@ export default function InspirationsPage() {
     () => api.listInspirations(),
     [],
   );
-  const { categories } = useContentCategories();
   const [createMode, setCreateMode] = useState<CreateMode>("manual");
   const [content, setContent] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
   const [tagsInput, setTagsInput] = useState("");
-  const [categoryPillar, setCategoryPillar] = useState("");
   const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [tagFilter, setTagFilter] = useState("全部");
-  const [sourceFilter, setSourceFilter] = useState<"全部" | Inspiration["source_type"]>("全部");
   const [sortKey, setSortKey] = useState<SortKey>("newest");
   const [actionError, setActionError] = useState("");
   const [actionInfo, setActionInfo] = useState("");
@@ -80,14 +63,8 @@ export default function InspirationsPage() {
   const [editContent, setEditContent] = useState("");
   const [editTagsInput, setEditTagsInput] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
-  const [detailSnapshot, setDetailSnapshot] = useState<TrendInspirationSnapshot | null>(null);
-
-  const allTags = useMemo(() => {
-    const tags = new Set<string>();
-    categories.forEach((c) => tags.add(c.name));
-    (items ?? []).forEach((item) => item.tags.forEach((t) => tags.add(t)));
-    return Array.from(tags);
-  }, [items, categories]);
+  const [convertingId, setConvertingId] = useState<string | null>(null);
+  const [writingId, setWritingId] = useState<string | null>(null);
 
   const sourceCounts = useMemo(() => {
     const counts: Record<Inspiration["source_type"], number> = {
@@ -103,12 +80,6 @@ export default function InspirationsPage() {
 
   const filtered = useMemo(() => {
     let list = items ?? [];
-    if (tagFilter !== "全部") {
-      list = list.filter((item) => item.tags.includes(tagFilter));
-    }
-    if (sourceFilter !== "全部") {
-      list = list.filter((item) => item.source_type === sourceFilter);
-    }
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       list = list.filter(
@@ -123,7 +94,7 @@ export default function InspirationsPage() {
       return sortKey === "newest" ? diff : -diff;
     });
     return list;
-  }, [items, tagFilter, sourceFilter, searchQuery, sortKey]);
+  }, [items, searchQuery, sortKey]);
 
   const recentItems = useMemo(
     () =>
@@ -139,9 +110,6 @@ export default function InspirationsPage() {
     setSubmitting(true);
     try {
       const tags = parseTagsInput(tagsInput);
-      if (categoryPillar && !tags.includes(categoryPillar)) {
-        tags.unshift(categoryPillar);
-      }
       if (createMode === "screenshot") {
         if (!screenshotFile) {
           setActionError("请选择截图文件");
@@ -165,7 +133,6 @@ export default function InspirationsPage() {
       }
       setContent("");
       setTagsInput("");
-      setCategoryPillar("");
       await reload();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "保存失败");
@@ -259,11 +226,30 @@ export default function InspirationsPage() {
 
   async function convertToTopic(id: string) {
     setActionError("");
+    setActionInfo("");
+    setConvertingId(id);
     try {
-      const result = await api.inspirationToTopic(id);
-      router.push(`/create/${result.project.id}`);
+      await api.inspirationToTopic(id);
+      await reload();
+      setActionInfo("已转入选题库");
+      setTimeout(() => setActionInfo(""), 2500);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "转换失败");
+    } finally {
+      setConvertingId(null);
+    }
+  }
+
+  async function startWriting(id: string) {
+    setActionError("");
+    setWritingId(id);
+    try {
+      const project = await api.inspirationToProject(id);
+      router.push(`/create/${project.id}`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "进入创作室失败");
+    } finally {
+      setWritingId(null);
     }
   }
 
@@ -322,23 +308,7 @@ export default function InspirationsPage() {
     );
   }
 
-  function renderTrendDetailButton(item: Inspiration) {
-    if (!item.trend_snapshot) return null;
-    return (
-      <button
-        type="button"
-        onClick={() => setDetailSnapshot(item.trend_snapshot ?? null)}
-        className="mb-4 inline-flex items-center gap-1 rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-[12px] font-semibold text-primary transition-colors hover:bg-primary/10"
-      >
-        <Icon name="insights" className="text-[16px]" />
-        查看热点分析
-      </button>
-    );
-  }
-
   function renderCardPreview(item: Inspiration) {
-    const preview = item.trend_snapshot?.title || item.content;
-    const subtitle = item.trend_snapshot?.summary || (item.trend_snapshot ? item.content : "");
     return (
       <>
         <p
@@ -348,15 +318,50 @@ export default function InspirationsPage() {
               : "text-[22px] font-medium"
           }`}
         >
-          {preview}
+          {item.content}
         </p>
-        {subtitle && (
-          <p className="long-text-wrap mb-4 mt-3 line-clamp-3 text-[14px] leading-relaxed text-on-surface-variant">
-            {subtitle}
-          </p>
-        )}
-        {!subtitle && <div className="mb-4" />}
+        <div className="mb-4" />
       </>
+    );
+  }
+
+  function renderCardButtons(item: Inspiration, isHighlight = false) {
+    const isConverting = convertingId === item.id;
+    const isWriting = writingId === item.id;
+    const busy = isConverting || isWriting;
+
+    return (
+      <div className="mb-6 flex flex-col gap-2">
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => convertToTopic(item.id)}
+            disabled={busy}
+            className={`flex-1 rounded-lg border py-2.5 text-[12px] font-bold transition-all hover:opacity-90 disabled:opacity-50 ${
+              isHighlight
+                ? "border-primary/30 bg-surface text-primary"
+                : "border-outline-variant/40 bg-surface text-on-surface"
+            }`}
+          >
+            {isConverting ? "保存中..." : "一键转选题"}
+          </button>
+          <button
+            type="button"
+            onClick={() => startWriting(item.id)}
+            disabled={busy}
+            className={`flex-1 rounded-lg py-2.5 text-[12px] font-bold transition-all hover:opacity-90 disabled:opacity-50 ${
+              isHighlight
+                ? "bg-primary text-on-primary"
+                : "bg-inverse-surface text-inverse-on-surface"
+            }`}
+          >
+            {isWriting ? "进入中..." : "转选题并开写"}
+          </button>
+        </div>
+        <p className="text-[11px] text-on-surface-variant/60">
+          「转选题并开写」会自动建选题、进入创作室，并从灵感库移除该条。
+        </p>
+      </div>
     );
   }
 
@@ -377,73 +382,6 @@ export default function InspirationsPage() {
 
   return (
     <div className="flex min-h-[calc(100vh-64px)]">
-      <aside className="hidden w-64 shrink-0 space-y-10 border-r border-outline-variant/50 bg-surface p-8 xl:block">
-        <div>
-          <h3 className="mb-6 text-[11px] font-bold uppercase tracking-[0.15em] text-on-surface-variant">
-            内容支柱
-          </h3>
-          <ul className="space-y-2">
-            <li>
-              <button
-                type="button"
-                onClick={() => setTagFilter("全部")}
-                className={`w-full rounded-xl px-4 py-2.5 text-left text-[15px] transition-colors ${
-                  tagFilter === "全部"
-                    ? "bg-primary/10 font-bold text-primary"
-                    : "text-on-surface-variant hover:bg-surface-container-low"
-                }`}
-              >
-                全部灵感
-              </button>
-            </li>
-            {allTags.map((tag) => (
-              <li key={tag}>
-                <button
-                  type="button"
-                  onClick={() => setTagFilter(tag)}
-                  className={`w-full rounded-xl px-4 py-2.5 text-left text-[15px] transition-colors ${
-                    tagFilter === tag
-                      ? "bg-primary/10 font-bold text-primary"
-                      : "text-on-surface-variant hover:bg-surface-container-low"
-                  }`}
-                >
-                  {tag}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div>
-          <h3 className="mb-6 text-[11px] font-bold uppercase tracking-[0.15em] text-on-surface-variant">
-            来源
-          </h3>
-          <ul className="space-y-2">
-            {sourceFilterOptions.map(({ key, label }) => {
-              const count = key === "全部" ? (items?.length ?? 0) : sourceCounts[key];
-              return (
-                <li key={key}>
-                  <button
-                    type="button"
-                    onClick={() => setSourceFilter(key)}
-                    className={`flex w-full items-center justify-between rounded-xl px-4 py-2.5 text-left text-[15px] transition-colors ${
-                      sourceFilter === key
-                        ? "bg-primary/10 font-bold text-primary"
-                        : "text-on-surface-variant hover:bg-surface-container-low"
-                    }`}
-                  >
-                    <span>{label}</span>
-                    <span className="rounded-full bg-surface-container px-2 py-0.5 text-[11px] font-bold">
-                      {count}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      </aside>
-
       <div className="custom-scrollbar flex-1 overflow-y-auto p-10">
         <div className="mx-auto max-w-6xl">
           <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
@@ -530,16 +468,6 @@ export default function InspirationsPage() {
                 className="min-h-[120px] w-full resize-none rounded-xl border border-outline-variant/30 bg-surface-container-lowest p-6 text-[15px] outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
 
-              <div>
-                <p className="mb-2 text-xs font-semibold text-on-surface-variant">内容栏目（可选）</p>
-                <CategoryPicker
-                  categories={categories}
-                  value={categoryPillar}
-                  onChange={setCategoryPillar}
-                  emptyLabel="不指定栏目"
-                />
-              </div>
-
               <div className="relative">
                 <Icon
                   name="tag"
@@ -611,13 +539,7 @@ export default function InspirationsPage() {
                         <p className="long-text-wrap mb-6 line-clamp-3 text-[15px] leading-relaxed text-on-surface-variant">
                           {item.content}
                         </p>
-                        <button
-                          type="button"
-                          onClick={() => convertToTopic(item.id)}
-                          className="mb-6 w-full rounded-lg bg-inverse-surface py-2.5 text-[12px] font-bold text-inverse-on-surface transition-all hover:opacity-90"
-                        >
-                          一键转选题
-                        </button>
+                        {renderCardButtons(item)}
                         {renderCardFooter(item)}
                       </div>
                     </div>
@@ -684,23 +606,12 @@ export default function InspirationsPage() {
                           </a>
                         )}
                         {renderCardPreview(item)}
-                        {renderTrendDetailButton(item)}
                       </>
                     )}
 
                     {editingId !== item.id && (
                       <>
-                        <button
-                          type="button"
-                          onClick={() => convertToTopic(item.id)}
-                          className={`mb-6 w-full rounded-lg py-2.5 text-[12px] font-bold transition-all hover:opacity-90 ${
-                            isHighlight
-                              ? "bg-primary text-on-primary"
-                              : "bg-inverse-surface text-inverse-on-surface"
-                          }`}
-                        >
-                          一键转选题
-                        </button>
+                        {renderCardButtons(item, isHighlight)}
                         {renderCardFooter(item)}
                       </>
                     )}
@@ -807,13 +718,6 @@ export default function InspirationsPage() {
           新建灵感
         </span>
       </button>
-
-      {detailSnapshot && (
-        <TrendAnalysisDetailModal
-          snapshot={detailSnapshot}
-          onClose={() => setDetailSnapshot(null)}
-        />
-      )}
     </div>
   );
 }

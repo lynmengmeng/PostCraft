@@ -137,13 +137,25 @@ export default function ToolsPage() {
     }
   }
 
-  async function saveTrendToInspiration(payload: {
+  function markTrendSaved(trendId: string) {
+    setSavedPickIds((prev) => new Set(prev).add(trendId));
+    setData((prev) =>
+      prev
+        ? {
+            ...prev,
+            saved_trend_ids: Array.from(new Set([...(prev.saved_trend_ids ?? []), trendId])),
+          }
+        : prev,
+    );
+  }
+
+  async function saveTrendToTopic(payload: {
     title: string;
     snapshot: ReturnType<typeof buildTrendSnapshot>;
     sourceUrl?: string;
   }) {
     const inspiration = inspirationPreviewFromSnapshot(payload.snapshot);
-    await api.trendToInspiration({
+    await api.trendToTopic({
       title: payload.title,
       inspiration,
       content_pillar: "热点观察",
@@ -151,6 +163,7 @@ export default function ToolsPage() {
       trend_id: payload.snapshot.trend_id,
       trend_snapshot: payload.snapshot,
     });
+    markTrendSaved(payload.snapshot.trend_id);
   }
 
   async function startWritingFromPick(pick: WechatInspirationPick) {
@@ -182,28 +195,19 @@ export default function ToolsPage() {
     }
   }
 
-  async function savePickToInspiration(pick: WechatInspirationPick) {
-    const actionKey = `inspiration:${pick.trend_id}`;
+  async function savePickToTopic(pick: WechatInspirationPick) {
+    const actionKey = `topic:${pick.trend_id}`;
     setBusyAction(actionKey);
     setActionMsgError("");
     try {
       const resolvedAnalysis = await resolveAnalysisForPick(pick);
       const snapshot = snapshotFromPick(pick, resolvedAnalysis);
-      await saveTrendToInspiration({
+      await saveTrendToTopic({
         title: pick.article_title,
         snapshot,
         sourceUrl: pick.url,
       });
-      setSavedPickIds((prev) => new Set(prev).add(pick.trend_id));
-      setData((prev) =>
-        prev
-          ? {
-              ...prev,
-              saved_trend_ids: Array.from(new Set([...(prev.saved_trend_ids ?? []), pick.trend_id])),
-            }
-          : prev,
-      );
-      setActionMsg("已存入灵感库");
+      setActionMsg("已存入选题库");
       setTimeout(() => setActionMsg(""), 2500);
     } catch (err) {
       setActionMsgError(err instanceof Error ? err.message : "保存失败");
@@ -212,10 +216,10 @@ export default function ToolsPage() {
     }
   }
 
-  async function saveAllPicksToInspiration() {
+  async function saveAllPicksToTopic() {
     const picks = data?.wechat_picks ?? [];
     if (!picks.length) return;
-    setBusyAction("inspiration:all");
+    setBusyAction("topic:all");
     setActionMsgError("");
     try {
       let saved = 0;
@@ -223,22 +227,17 @@ export default function ToolsPage() {
         if (savedTrendIds.has(pick.trend_id)) continue;
         const resolvedAnalysis = analysisFromPick(pick);
         const snapshot = snapshotFromPick(pick, resolvedAnalysis);
-        await saveTrendToInspiration({
+        await saveTrendToTopic({
           title: pick.article_title,
           snapshot,
           sourceUrl: pick.url,
         });
         saved += 1;
       }
-      const allIds = picks.map((pick) => pick.trend_id);
-      setSavedPickIds(new Set(allIds));
-      setData((prev) =>
-        prev ? { ...prev, saved_trend_ids: Array.from(new Set([...(prev.saved_trend_ids ?? []), ...allIds])) } : prev,
-      );
-      setActionMsg(saved > 0 ? `已收藏 ${saved} 条到灵感库` : "已全部收藏过");
+      setActionMsg(saved > 0 ? `已存 ${saved} 条到选题库` : "已全部存过");
       setTimeout(() => setActionMsg(""), 2500);
     } catch (err) {
-      setActionMsgError(err instanceof Error ? err.message : "批量收藏失败");
+      setActionMsgError(err instanceof Error ? err.message : "批量保存失败");
     } finally {
       setBusyAction(null);
     }
@@ -289,30 +288,8 @@ export default function ToolsPage() {
         source_url: item.url,
         trend_snapshot: snapshot,
       });
+      markTrendSaved(item.id);
       setActionMsg("已存入选题库");
-      setTimeout(() => setActionMsg(""), 2500);
-    } catch (err) {
-      setActionMsgError(err instanceof Error ? err.message : "保存失败");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function saveToInspiration(item: TrendItem) {
-    setBusyAction("inspiration");
-    setActionMsgError("");
-    try {
-      if (!analysis) {
-        setActionMsgError("请等待热点分析完成后再收藏");
-        return;
-      }
-      const snapshot = buildTrendSnapshot(item, analysis);
-      await saveTrendToInspiration({
-        title: item.title,
-        snapshot,
-        sourceUrl: item.url,
-      });
-      setActionMsg("已存入灵感库");
       setTimeout(() => setActionMsg(""), 2500);
     } catch (err) {
       setActionMsgError(err instanceof Error ? err.message : "保存失败");
@@ -421,11 +398,11 @@ export default function ToolsPage() {
                 <button
                   type="button"
                   disabled={busyAction !== null}
-                  onClick={() => void saveAllPicksToInspiration()}
+                  onClick={() => void saveAllPicksToTopic()}
                   className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-surface-container-lowest px-3 py-1.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
                 >
                   <Icon name="bookmark" className="text-sm" />
-                  {busyAction === "inspiration:all" ? "收藏中..." : "全部收藏"}
+                  {busyAction === "topic:all" ? "保存中..." : "全部存选题"}
                 </button>
               </div>
             </div>
@@ -463,15 +440,15 @@ export default function ToolsPage() {
                     <button
                       type="button"
                       disabled={busyAction !== null}
-                      onClick={() => void savePickToInspiration(pick)}
+                      onClick={() => void savePickToTopic(pick)}
                       className="inline-flex items-center gap-1 rounded-lg border border-outline-variant/30 px-3 py-1.5 text-[11px] disabled:opacity-50"
                     >
                       <Icon name="bookmark" className="text-sm" />
-                      {busyAction === `inspiration:${pick.trend_id}`
-                        ? "收藏中..."
+                      {busyAction === `topic:${pick.trend_id}`
+                        ? "保存中..."
                         : savedTrendIds.has(pick.trend_id)
-                          ? "已收藏"
-                          : "收藏"}
+                          ? "已存选题"
+                          : "存选题"}
                     </button>
                     <button
                       type="button"
@@ -607,19 +584,11 @@ export default function ToolsPage() {
                 </button>
                 <button
                   type="button"
-                  disabled={busyAction !== null}
+                  disabled={busyAction !== null || savedTrendIds.has(selected.id)}
                   onClick={() => void saveToTopic(selected)}
                   className="rounded-xl border border-outline-variant/30 px-3 py-2 text-xs disabled:opacity-50"
                 >
-                  存选题
-                </button>
-                <button
-                  type="button"
-                  disabled={busyAction !== null}
-                  onClick={() => void saveToInspiration(selected)}
-                  className="rounded-xl border border-outline-variant/30 px-3 py-2 text-xs disabled:opacity-50"
-                >
-                  存灵感
+                  {savedTrendIds.has(selected.id) ? "已存选题" : "存选题"}
                 </button>
               </div>
             </div>

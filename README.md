@@ -80,7 +80,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8082/api
 ## 当前能力（MVP）
 
 - **工作台**：一句话灵感一键进入创作室；首页展示待完成草稿与最近编辑
-- **灵感库 / 选题库**：打标签、筛选、删除；一键转选题并进入创作室
+- **灵感库 / 选题库**：灵感库临时收集（文字/截图/链接）；转选题后移入选题库；选题库支持栏目与来源筛选；热点仅存选题库。详见 [灵感/选题流程](docs/architecture/inspiration-topic-flow.md)
 - **创作工作室**：对话（SSE 流式 + 快捷指令）/ 三平台正文可编辑（自动保存）/ 预览
 - **Skill 流水线**：按 PRD 标准生成三平台内容；对话 patch 优先更新 `humanized` 中间层
 - **标题**：批量生成 ≥10 个标题，应用至当前平台
@@ -98,5 +98,6 @@ NEXT_PUBLIC_API_URL=http://localhost:8082/api
 ## 文档
 
 - [产品需求文档（PRD）](docs/PostCraft-PRD.md) — 第9 MVP 能力清单与同步
+- [灵感库 / 选题库设计](docs/architecture/inspiration-topic-flow.md) — 收件箱 / backlog / 创作室职责与流程
 - [Chat Orchestrator 设计](docs/architecture/chat-orchestrator.md)
 - [Skill 目录](skills/README.md)

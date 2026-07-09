@@ -41,6 +41,7 @@ from app.models.schemas import (
     TrialMetricsSummary,
     ContentCategory,
     ContentCategoryCreate,
+    ContentCategoryUpdate,
     ContentCategoriesResponse,
     ChatMessage,
     RiskWarningItem,
@@ -90,6 +91,81 @@ def _save_project(db: Session, project: ContentProject) -> ContentProject:
         return project_repo.save_project(db, project, **_scope())
     except ValueError as exc:
         raise repo_http_exception(exc) from exc
+
+
+def _project_source_from_topic(topic: Topic) -> str:
+    if topic.source_type == "trend":
+        return "trend"
+    snap = topic.trend_snapshot
+    if snap and (snap.trend_id or snap.analysis.why_hot or snap.analysis.account_angle):
+        return "trend"
+    return "topic"
+
+
+def _topic_title_from_inspiration(inspiration: Inspiration) -> str:
+    if inspiration.trend_snapshot and inspiration.trend_snapshot.title.strip():
+        return inspiration.trend_snapshot.title.strip()[:64]
+    if inspiration.content.strip():
+        return inspiration.content.strip().splitlines()[0][:64]
+    return "未命名选题"
+
+
+def _topic_from_inspiration(inspiration: Inspiration) -> Topic:
+    return Topic(
+        title=_topic_title_from_inspiration(inspiration),
+        inspiration=inspiration.content,
+        direction="社会观察",
+        tone="温和共情",
+        content_pillar=inspiration.tags[0] if inspiration.tags else "",
+        source_type=inspiration.source_type,
+        source_url=inspiration.source_url,
+        image_url=inspiration.image_url,
+        trend_snapshot=inspiration.trend_snapshot,
+    )
+
+
+def _mark_topic_writing(topic: Topic) -> None:
+    topic.status = "writing"
+    if topic.material_status == "idea":
+        topic.material_status = "ready"
+    topic.updated_at = datetime.utcnow()
+
+
+def _resolve_project_from_topic(db: Session, topic: Topic) -> ContentProject:
+    scope = _scope()
+    if topic.project_id:
+        existing = project_repo.get_project(db, topic.project_id, **scope)
+        if existing:
+            if topic.status != "writing":
+                _mark_topic_writing(topic)
+                topic_repo.update(db, topic, **scope)
+            return existing
+
+    project = ContentProject(
+        id=new_id(),
+        title=topic.title,
+        inspiration=topic.inspiration or topic.title,
+        content_pillar=topic.content_pillar,
+        topic_id=topic.id,
+        topic_title=topic.title,
+        source_type=_project_source_from_topic(topic),
+        source_url=topic.source_url,
+        image_url=topic.image_url,
+        trend_snapshot=topic.trend_snapshot,
+        topic_meta=TopicMeta(
+            direction=topic.direction,
+            tone=topic.tone,
+            audience=topic.audience,
+            platforms=topic.platforms,
+            content_pillar=topic.content_pillar,
+            series=topic.series,
+        ),
+    )
+    saved = _save_project(db, project)
+    topic.project_id = saved.id
+    _mark_topic_writing(topic)
+    topic_repo.update(db, topic, **scope)
+    return saved
 
 
 def _scan_and_attach_warnings(project: ContentProject, db: Session) -> ContentProject:
@@ -166,6 +242,7 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> Con
         inspiration=payload.inspiration,
         topic_meta=topic_meta,
         content_pillar=payload.content_pillar,
+        source_type="direct",
     )
     return _save_project(db, project)
 
@@ -395,6 +472,7 @@ async def _cascade_once(
         list(payload.target_platforms),
         style_profile,
         on_delta=on_delta if payload.stream else None,
+        content_categories=category_repo.list_all(db, **_scope()),
     )
     saved = _save_project(db, updated)
     return {
@@ -422,12 +500,43 @@ def trial_summary(db: Session = Depends(get_db)) -> TrialMetricsSummary:
         if count >= 2:
             multi_platform += 1
     avg_rounds = sum(chat_rounds) / len(chat_rounds) if chat_rounds else 0.0
+
+    pillar_stats: dict[str, dict[str, int | float]] = {}
+    for project in projects:
+        pillar = (project.content_pillar or project.topic_meta.content_pillar or "未分类").strip() or "未分类"
+        bucket = pillar_stats.setdefault(pillar, {"total": 0, "completed": 0, "multi": 0})
+        bucket["total"] = int(bucket["total"]) + 1
+        if project.status in ("ready", "published"):
+            bucket["completed"] = int(bucket["completed"]) + 1
+        platform_count = 0
+        if project.platforms["wechat"].body:
+            platform_count += 1
+        if project.platforms["xiaohongshu"].body:
+            platform_count += 1
+        if project.platforms["douyin"].script:
+            platform_count += 1
+        if platform_count >= 2:
+            bucket["multi"] = int(bucket["multi"]) + 1
+
+    by_pillar = []
+    for name, stats in sorted(pillar_stats.items(), key=lambda item: (-int(item[1]["total"]), item[0])):
+        pillar_total = int(stats["total"])
+        by_pillar.append(
+            {
+                "name": name,
+                "total": pillar_total,
+                "completed": int(stats["completed"]),
+                "multi_platform_rate": round(int(stats["multi"]) / pillar_total, 4) if pillar_total else 0.0,
+            }
+        )
+
     return TrialMetricsSummary(
         total_projects=total,
         completed_projects=completed,
         completion_rate=round(completed / total, 4) if total else 0.0,
         avg_chat_rounds=round(avg_rounds, 2),
         multi_platform_rate=round(multi_platform / total, 4) if total else 0.0,
+        by_pillar=by_pillar,
     )
 
 
@@ -843,7 +952,7 @@ async def cascade_project_platforms(
 
 @protected_router.get("/inspirations", response_model=list[Inspiration])
 def list_inspirations(db: Session = Depends(get_db)) -> list[Inspiration]:
-    return inspiration_repo.list_all(db, **_scope())
+    return inspiration_repo.list_active(db, **_scope())
 
 
 @protected_router.post("/inspirations", response_model=Inspiration)
@@ -910,7 +1019,7 @@ def create_inspiration_from_link(
 
 @protected_router.get("/inspirations/export")
 def export_inspirations(db: Session = Depends(get_db)) -> dict:
-    items = inspiration_repo.list_all(db, **_scope())
+    items = inspiration_repo.list_active(db, **_scope())
     return {
         "version": 1,
         "exported_at": datetime.utcnow().isoformat(),
@@ -944,7 +1053,7 @@ def import_inspirations(
 
 @protected_router.get("/inspirations/stats", response_model=InspirationStats)
 def inspiration_stats(db: Session = Depends(get_db)) -> InspirationStats:
-    items = inspiration_repo.list_all(db, **_scope())
+    items = inspiration_repo.list_active(db, **_scope())
     by_source = {"manual": 0, "screenshot": 0, "link": 0}
     highlight_count = 0
     for item in items:
@@ -980,44 +1089,28 @@ def update_inspiration(
     return inspiration_repo.update(db, updated, **_scope())
 
 
-@protected_router.post("/inspirations/{inspiration_id}/to-topic")
-def inspiration_to_topic(inspiration_id: str, db: Session = Depends(get_db)) -> dict:
+@protected_router.post("/inspirations/{inspiration_id}/to-topic", response_model=Topic)
+def inspiration_to_topic(inspiration_id: str, db: Session = Depends(get_db)) -> Topic:
     inspiration = inspiration_repo.get(db, inspiration_id, **_scope())
     if not inspiration:
         raise HTTPException(status_code=404, detail="Inspiration not found")
 
-    topic_title = inspiration.content[:64]
-    if inspiration.trend_snapshot and inspiration.trend_snapshot.title.strip():
-        topic_title = inspiration.trend_snapshot.title.strip()[:64]
-    elif inspiration.content.strip():
-        topic_title = inspiration.content.strip().splitlines()[0][:64]
-
-    topic = Topic(
-        title=topic_title,
-        inspiration=inspiration.content,
-        direction="社会观察",
-        tone="温和共情",
-        content_pillar=inspiration.tags[0] if inspiration.tags else "",
-        trend_snapshot=inspiration.trend_snapshot,
-    )
+    topic = _topic_from_inspiration(inspiration)
     saved_topic = topic_repo.create(db, topic, **_scope())
-    pillar = saved_topic.content_pillar
-    project = ContentProject(
-        id=new_id(),
-        title=saved_topic.title,
-        inspiration=saved_topic.inspiration,
-        topic_meta=TopicMeta(
-            direction=saved_topic.direction,
-            tone=saved_topic.tone,
-            content_pillar=pillar,
-        ),
-        content_pillar=pillar,
-    )
-    saved_project = _save_project(db, project)
-    return {
-        "topic": saved_topic.model_dump(mode="json"),
-        "project": saved_project.model_dump(mode="json"),
-    }
+    inspiration_repo.delete(db, inspiration_id, **_scope())
+    return saved_topic
+
+
+@protected_router.post("/inspirations/{inspiration_id}/to-project", response_model=ContentProject)
+def inspiration_to_project(inspiration_id: str, db: Session = Depends(get_db)) -> ContentProject:
+    inspiration = inspiration_repo.get(db, inspiration_id, **_scope())
+    if not inspiration:
+        raise HTTPException(status_code=404, detail="Inspiration not found")
+
+    topic = _topic_from_inspiration(inspiration)
+    saved_topic = topic_repo.create(db, topic, **_scope())
+    inspiration_repo.delete(db, inspiration_id, **_scope())
+    return _resolve_project_from_topic(db, saved_topic)
 
 
 @protected_router.delete("/inspirations/{inspiration_id}")
@@ -1084,22 +1177,7 @@ def topic_to_project(topic_id: str, db: Session = Depends(get_db)) -> ContentPro
     topic = topic_repo.get(db, topic_id, **_scope())
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
-
-    project = ContentProject(
-        id=new_id(),
-        title=topic.title,
-        inspiration=topic.inspiration or topic.title,
-        content_pillar=topic.content_pillar,
-        topic_meta=TopicMeta(
-            direction=topic.direction,
-            tone=topic.tone,
-            audience=topic.audience,
-            platforms=topic.platforms,
-            content_pillar=topic.content_pillar,
-            series=topic.series,
-        ),
-    )
-    return _save_project(db, project)
+    return _resolve_project_from_topic(db, topic)
 
 
 @protected_router.delete("/topics/{topic_id}")
@@ -1136,6 +1214,18 @@ def create_content_category(
         return category_repo.add_custom(db, payload, **_scope())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@protected_router.patch("/content-categories/{category_id}", response_model=ContentCategory)
+def update_content_category(
+    category_id: str,
+    payload: ContentCategoryUpdate,
+    db: Session = Depends(get_db),
+) -> ContentCategory:
+    try:
+        return category_repo.update_category(db, category_id, payload, **_scope())
+    except ValueError as exc:
+        raise HTTPException(status_code=404 if "不存在" in str(exc) else 400, detail=str(exc)) from exc
 
 
 @protected_router.delete("/content-categories/{category_id}")

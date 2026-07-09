@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { CategoryChip, CategoryPicker } from "@/components/content/CategoryPicker";
+import { ProjectSourceBadges } from "@/components/content/ProjectSourceBadges";
 import { LoadError } from "@/components/ui/LoadError";
 import { useShell } from "@/components/layout/AppShell";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
@@ -192,6 +193,7 @@ export function DraftsPageClient() {
                         未分类
                       </span>
                     )}
+                    <ProjectSourceBadges project={project} />
                     <CategoryPicker
                       categories={categories}
                       value={project.content_pillar ?? ""}

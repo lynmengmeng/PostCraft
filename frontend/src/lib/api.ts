@@ -1,5 +1,6 @@
 import type {
   AuthorStyleProfile,
+  CategoryPlatformHints,
   ContentCategory,
   ContentProject,
   Inspiration,
@@ -10,9 +11,11 @@ import type {
   ProjectDraftImportPayload,
   RiskWarning,
   Topic,
+  TopicMeta,
   TopicStats,
   TrendAnalysis,
   TrendInspirationSnapshot,
+  WechatLayoutPreset,
   TrendItem,
   TrendRelatedItem,
   TrendsBoard,
@@ -78,13 +81,34 @@ export interface ChatResult {
   };
 }
 
+export interface PillarMetrics {
+  name: string;
+  total: number;
+  completed: number;
+  multi_platform_rate: number;
+}
+
 export interface TrialMetricsSummary {
   total_projects: number;
   completed_projects: number;
   completion_rate: number;
   avg_chat_rounds: number;
   multi_platform_rate: number;
+  by_pillar: PillarMetrics[];
 }
+
+export type ContentCategoryPayload = {
+  name?: string;
+  description?: string;
+  prompt_hint?: string;
+  structure_hint?: string;
+  platform_hints?: Partial<CategoryPlatformHints>;
+  title_style?: string;
+  cover_mood?: string;
+  default_layout?: WechatLayoutPreset;
+  default_tone?: string;
+  example_topics?: string[];
+};
 
 export interface ChatOptions {
   action?: "generate_draft" | "generate_platform" | "generate_all" | "refine_draft" | "layout_images";
@@ -123,6 +147,7 @@ export const api = {
     title?: string;
     inspiration: string;
     content_pillar?: string;
+    topic_meta?: Partial<TopicMeta>;
   }) =>
     request<ContentProject>("/projects", {
       method: "POST",
@@ -477,7 +502,11 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   inspirationToTopic: (id: string) =>
-    request<{ topic: Topic; project: ContentProject }>(`/inspirations/${id}/to-topic`, {
+    request<Topic>(`/inspirations/${id}/to-topic`, {
+      method: "POST",
+    }),
+  inspirationToProject: (id: string) =>
+    request<ContentProject>(`/inspirations/${id}/to-project`, {
       method: "POST",
     }),
   deleteInspiration: (id: string) =>
@@ -535,18 +564,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  trendToInspiration: (payload: {
-    title: string;
-    inspiration?: string;
-    content_pillar?: string;
-    source_url?: string;
-    trend_id?: string;
-    trend_snapshot?: TrendInspirationSnapshot;
-  }) =>
-    request<Inspiration>("/tools/trends/to-inspiration", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
   trendToProject: (payload: {
     title: string;
     inspiration?: string;
@@ -570,13 +587,14 @@ export const api = {
 
   listContentCategories: () =>
     request<{ categories: ContentCategory[] }>("/content-categories"),
-  createContentCategory: (payload: {
-    name: string;
-    description?: string;
-    prompt_hint?: string;
-  }) =>
+  createContentCategory: (payload: ContentCategoryPayload & { name: string }) =>
     request<ContentCategory>("/content-categories", {
       method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateContentCategory: (id: string, payload: ContentCategoryPayload) =>
+    request<ContentCategory>(`/content-categories/${id}`, {
+      method: "PATCH",
       body: JSON.stringify(payload),
     }),
   deleteContentCategory: (id: string) =>

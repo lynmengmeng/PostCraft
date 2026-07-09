@@ -13,9 +13,13 @@ from app.models.schemas import (
 )
 
 
+def _pillar_name(project: ContentProject) -> str:
+    return (project.content_pillar or project.topic_meta.content_pillar or "").strip()
+
+
 def _mock_humanized(project: ContentProject) -> str:
     inspiration = project.inspiration or project.title
-    pillar = (project.content_pillar or project.topic_meta.content_pillar or "").strip()
+    pillar = _pillar_name(project)
     templates: dict[str, str] = {
         "周末出走计划": (
             f"## 这个周末，我想出去透口气\n\n{inspiration}\n\n"
@@ -53,29 +57,109 @@ def _mock_humanized(project: ContentProject) -> str:
 
 def _mock_platform_payload(project: ContentProject, humanized: str) -> dict:
     inspiration = project.inspiration or project.title
-    wechat_title = f"回村之后，我才看懂：{inspiration[:18]}"
-    xhs_title = f"关于{inspiration[:12]}，我想认真说几句"
-    hook = f"你有没有发现，{inspiration[:20]}？"
+    pillar = _pillar_name(project)
+    seed = inspiration[:18]
+
+    profiles: dict[str, dict] = {
+        "周末出走计划": {
+            "wechat_title": f"花不到 50 元，{seed}的周末出走",
+            "wechat_summary": "一次低成本周末出走，路线、花费和真实感受。",
+            "wechat_layout": "story",
+            "wechat_body_intro": "这个周末没走远，但足够把脑子里的噪音吹散一点。",
+            "xhs_title": f"周末出走｜{seed[:12]}",
+            "xhs_tags": ["周末出走", "低成本旅行", "武汉周边"],
+            "hook": f"这个周末，我只花了不到 50 元，{seed[:16]}",
+            "douyin_duration": "60s",
+            "cover_prompt": "户外自然光，骑行/江边场景，清新放松",
+            "title_style": "场景型",
+        },
+        "便宜但有用": {
+            "wechat_title": f"便宜但有用：{seed}",
+            "wechat_summary": "真实使用体验与避坑清单，不是广告。",
+            "wechat_layout": "checklist",
+            "wechat_body_intro": "这些东西都不贵，但我用了之后确实觉得生活舒服了一点。",
+            "xhs_title": f"便宜但有用｜{seed[:12]}",
+            "xhs_tags": ["好物分享", "避坑清单", "真实体验"],
+            "hook": f"别买错！关于{seed[:14]}，我踩过的坑",
+            "douyin_duration": "90s",
+            "cover_prompt": "居家产品实拍，简洁背景，真实不广告感",
+            "title_style": "搜索问题型",
+        },
+        "一个小故事": {
+            "wechat_title": f"{seed}，那个瞬间我记了很久",
+            "wechat_summary": "一个短故事，一点生活观察。",
+            "wechat_layout": "story",
+            "wechat_body_intro": "故事不长，但那个瞬间我记了很久。",
+            "xhs_title": f"一个小故事｜{seed[:10]}",
+            "xhs_tags": ["生活故事", "情绪共鸣", "普通人"],
+            "hook": f"说实话，看到{seed[:14]}的时候，我心里挺不是滋味",
+            "douyin_duration": "90s",
+            "cover_prompt": "情绪化纪实摄影，暖色或低饱和，人物细节",
+            "title_style": "情绪共鸣型",
+        },
+        "路上听什么": {
+            "wechat_title": f"骑车去江边，我反复听这几首",
+            "wechat_summary": "场景化歌单，不是单纯推歌。",
+            "wechat_layout": "lively",
+            "wechat_body_intro": "不是今日推荐歌曲列表，是某条路、某个傍晚反复听的几首歌。",
+            "xhs_title": f"路上听什么｜{seed[:12]}",
+            "xhs_tags": ["歌单分享", "场景音乐", "骑车日常"],
+            "hook": f"{seed[:12]}的时候，我总会听这几首",
+            "douyin_duration": "60s",
+            "cover_prompt": "傍晚骑行/耳机/车窗，氛围感但不炫光",
+            "title_style": "场景型",
+        },
+        "普通人观察": {
+            "wechat_title": f"关于{seed}，普通人的一点观察",
+            "wechat_summary": "现象观察，有分寸，不煽动。",
+            "wechat_layout": "classic",
+            "wechat_body_intro": "不是宏大叙事，是身边越来越常见的情绪。",
+            "xhs_title": f"普通人观察｜{seed[:12]}",
+            "xhs_tags": ["生活观察", "普通人", "消费观察"],
+            "hook": f"你有没有发现，{seed[:18]}？",
+            "douyin_duration": "90s",
+            "cover_prompt": "日常街拍纪实，普通人生活场景，克制不煽情",
+            "title_style": "观察型",
+        },
+    }
+    profile = profiles.get(pillar, {
+        "wechat_title": f"关于{seed}，我想认真说几句",
+        "wechat_summary": "一点真实观察。",
+        "wechat_layout": "classic",
+        "wechat_body_intro": "这不是危言耸听，而是我在生活里反复看到的细节。",
+        "xhs_title": f"关于{seed[:12]}，我想认真说几句",
+        "xhs_tags": ["生活观察", "真实分享"],
+        "hook": f"你有没有发现，{seed[:20]}？",
+        "douyin_duration": "90s",
+        "cover_prompt": "纪实风格，暖色生活场景",
+        "title_style": "观察型",
+    })
+
+    wechat_title = profile["wechat_title"]
+    xhs_title = profile["xhs_title"]
+    hook = profile["hook"]
+    layout = profile["wechat_layout"]
+    cover_prompt = profile["cover_prompt"]
 
     wechat = WechatContent(
         title=wechat_title,
-        summary="从一次回村的经历说起，聊聊被忽视的生活风险。",
+        summary=profile["wechat_summary"],
         body=(
             f"## 从一个细节说起\n\n"
             f"{inspiration}\n\n"
-            "![回村观察](__IMAGE_0__)\n\n"
-            "去年春节回村，我才真正注意到：很多老人并不是突然病倒，"
-            "而是长期处在不安全的生活环境里。\n\n"
-            "## 三个容易被忽略的原因\n\n"
-            "1. **劣质日用品长期接触**——三无产品在农村仍很常见\n"
-            "2. **医疗意识不足**——小问题拖成大问题\n"
-            "3. **环境问题被默认接受**——安全与健康被当作「没办法」\n\n"
-            "![日常细节](__IMAGE_1__)\n\n"
-            "> 这不是要制造焦虑，而是希望我们都能更认真地看待普通人的生活。\n\n"
+            f"![配图](__IMAGE_0__)\n\n"
+            f"{profile['wechat_body_intro']}\n\n"
+            "## 三个值得留下的点\n\n"
+            "1. **真实体验**——不是攻略，是我自己的感受\n"
+            "2. **低成本**——不用花很多钱也能好好放松\n"
+            "3. **可复刻**——你也能照着做\n\n"
+            f"![细节](__IMAGE_1__)\n\n"
+            "> 这不是广告，是我真实留下来的分享。\n\n"
             "## 写在最后\n\n"
-            "如果你也有类似观察，欢迎在评论区聊聊。"
+            "如果你也有类似经历，欢迎在评论区聊聊。"
         ),
         style_theme={
+            "layout_preset": layout,
             "accent": "#455548",
             "mood": "warm",
             "heading_style": "border_left",
@@ -83,100 +167,85 @@ def _mock_platform_payload(project: ContentProject, humanized: str) -> dict:
             "quote_border": "#d4a574",
         },
         image_placements=[
-            {"after_paragraph": 1, "asset_index": 0, "caption": "回村观察", "prompt": "纪实风格，农村傍晚，真实生活场景"},
-            {"after_paragraph": 4, "asset_index": 1, "caption": "日常细节", "prompt": "纪实风格，农村老人日常，暖色调"},
+            {"after_paragraph": 1, "asset_index": 0, "caption": "配图", "prompt": cover_prompt},
+            {"after_paragraph": 4, "asset_index": 1, "caption": "细节", "prompt": cover_prompt},
         ],
     )
     xhs = XiaohongshuContent(
         title=xhs_title,
         body=(
-            f"关于「{inspiration[:16]}」，我想分享一点真实观察 🌾\n\n"
-            "回农村之前，我以为这些问题离我很远。\n"
-            "回去之后才发现，它们就在日常里。\n\n"
-            "【要点一】劣质商品还在流通\n"
-            "· 三无产品在农村仍常见\n"
-            "· 包装像正规药，识别看细节\n\n"
+            f"关于「{seed}」，分享一点真实感受 ✨\n\n"
+            f"{profile['wechat_body_intro']}\n\n"
+            "【要点一】真实体验\n"
+            "· 不是广告清单\n"
+            "· 是我真实留下来的\n\n"
             "—————\n\n"
-            "【要点二】小问题容易被忽视\n"
-            "· 拖久了才去看\n"
-            "· 家人总觉得「没事」\n\n"
+            "【要点二】可以照着做\n"
+            "· 低成本\n"
+            "· 半天就够\n\n"
             "如果你也有类似感受，评论区聊聊 👇"
         ),
-        tags=["生活观察", "农村生活", "健康提醒"],
-        cover_style="warm_documentary_photography_of_a_rural_sunset_over",
+        tags=profile["xhs_tags"],
+        cover_style="warm_documentary_photography_scene",
         image_pages=[
             {
                 "page": 1,
                 "role": "cover",
                 "headline": xhs_title[:14],
-                "subheadline": "真实观察分享",
+                "subheadline": pillar or "生活分享",
                 "body_text": "",
-                "prompt": "暖色纪实摄影，农村傍晚，3:4竖版",
+                "prompt": f"{cover_prompt}，3:4竖版",
             },
             {
                 "page": 2,
                 "role": "content",
-                "headline": "劣质商品还在流通",
-                "body_text": "三无产品包装像正规药",
+                "headline": "真实体验",
+                "body_text": profile["wechat_body_intro"][:40],
                 "prompt": "简洁文字排版，要点一页",
-            },
-            {
-                "page": 3,
-                "role": "summary",
-                "headline": "收藏备用",
-                "subheadline": "评论区聊聊",
-                "body_text": "三个被忽略的原因",
-                "prompt": "总结页，互动引导",
             },
         ],
     )
     douyin = DouyinContent(
         hook=hook,
-        duration="90s",
+        duration=profile["douyin_duration"],
         script=[
             DouyinScene(
                 index=1,
                 duration="3s",
                 narration=hook,
-                visual="近景，农村院落",
-                subtitle=hook,
+                visual="近景，生活场景",
+                subtitle=hook[:20],
             ),
             DouyinScene(
                 index=2,
                 duration="12s",
-                narration="很多人以为风险离自己很远，其实它就在日常里。",
-                visual="老人日常起居画面",
-                subtitle="风险就在日常里",
+                narration=profile["wechat_body_intro"],
+                visual="日常画面",
+                subtitle="真实分享",
             ),
             DouyinScene(
                 index=3,
-                duration="15s",
-                narration="劣质商品、医疗意识不足、环境问题，往往是一起出现的。",
-                visual="分点字幕",
-                subtitle="三个被忽略的原因",
-            ),
-            DouyinScene(
-                index=4,
                 duration="10s",
-                narration="我们不是要制造焦虑，而是希望更多人看见这些真实细节。",
+                narration="不是广告，是我真实留下来的。",
                 visual="暖色结尾镜头",
-                subtitle="看见，比忽视更重要",
+                subtitle="评论区聊聊",
             ),
         ],
     )
+    title_style = profile["title_style"]
     titles = [
-        TitleCandidate(text=wechat_title, style="深度型"),
+        TitleCandidate(text=wechat_title, style=title_style),
         TitleCandidate(text=xhs_title, style="情绪共鸣型"),
-        TitleCandidate(text=f"为什么{inspiration[:10]}值得被看见？", style="问题型"),
-        TitleCandidate(text=f"回村后才懂：{inspiration[:12]}", style="故事型"),
-        TitleCandidate(text="普通家庭最容易忽略的一个风险", style="警醒型"),
-        TitleCandidate(text=f"关于{inspiration[:8]}，我想认真说几句", style="情绪共鸣型"),
-        TitleCandidate(text=f"回农村后，我注意到的一个细节", style="故事型"),
-        TitleCandidate(text=f"{inspiration[:10]}背后，藏着什么？", style="问题型"),
-        TitleCandidate(text="不是危言耸听，是真实观察", style="深度型"),
-        TitleCandidate(text="为什么这件事值得被看见？", style="问题型"),
-        TitleCandidate(text=f"从{inspiration[:6]}说起", style="故事型"),
-        TitleCandidate(text="温和提醒：别忽视这些日常风险", style="警醒型"),
+        TitleCandidate(text=f"为什么{seed[:10]}值得被看见？", style="问题型"),
+        TitleCandidate(text=f"关于{seed[:8]}，我想认真说几句", style=title_style),
+        TitleCandidate(text=f"{seed[:12]}的真实体验", style="故事型"),
+        TitleCandidate(text=f"{seed[:10]}，我踩过的坑", style="搜索问题型"),
+        TitleCandidate(text=f"便宜但有用：{seed[:10]}", style="搜索问题型"),
+        TitleCandidate(text=f"这个周末，{seed[:10]}", style="场景型"),
+        TitleCandidate(text=f"路上听什么｜{seed[:8]}", style="场景型"),
+        TitleCandidate(text="不是广告，是真实分享", style=title_style),
+        TitleCandidate(text=f"从{seed[:6]}说起", style="故事型"),
+        TitleCandidate(text="温和提醒：别忽视这些日常细节", style="观察型"),
     ]
 
     return {
@@ -189,6 +258,7 @@ def _mock_platform_payload(project: ContentProject, humanized: str) -> dict:
         },
         "titles": titles,
         "wechat_title": wechat_title,
+        "cover_prompt": cover_prompt,
     }
 
 
@@ -214,6 +284,7 @@ def build_mock_platforms(
         patch[f"platforms.{platform}"] = payload["platforms"][platform].model_dump(mode="json")  # type: ignore[index]
     if with_titles or len(targets) >= 3 or not project.titles:
         patch["titles"] = [item.model_dump(mode="json") for item in payload["titles"]]  # type: ignore[index]
+    cover_prompt = payload.get("cover_prompt", "纪实风格，暖色生活场景")
     cover_assets: list[dict] = []
     if "wechat" in targets:
         cover_assets.extend(
@@ -221,19 +292,19 @@ def build_mock_platforms(
                 CoverAsset(
                     platform="wechat",
                     headline=str(payload["wechat_title"])[:20],
-                    subheadline="回村观察",
-                    prompt="纪实风格，农村傍晚，真实生活场景",
+                    subheadline="配图",
+                    prompt=cover_prompt,
                     after_paragraph=1,
-                    caption="回村观察",
+                    caption="配图",
                     asset_index=0,
                 ).model_dump(mode="json"),
                 CoverAsset(
                     platform="wechat",
                     headline=str(payload["wechat_title"])[:20],
-                    subheadline="日常细节",
-                    prompt="纪实风格，农村老人日常，暖色调",
+                    subheadline="细节",
+                    prompt=cover_prompt,
                     after_paragraph=4,
-                    caption="日常细节",
+                    caption="细节",
                     asset_index=1,
                 ).model_dump(mode="json"),
             ]
@@ -246,7 +317,7 @@ def build_mock_platforms(
                     platform="xiaohongshu",
                     headline=str(page.get("headline") or "")[:20],
                     subheadline=str(page.get("subheadline") or ""),
-                    prompt=str(page.get("prompt") or "小红书轮播配图"),
+                    prompt=str(page.get("prompt") or cover_prompt),
                     after_paragraph=index,
                     caption=str(page.get("headline") or f"轮播第{index + 1}张"),
                     asset_index=100 + index,
@@ -284,27 +355,25 @@ def build_mock_generate_all(project: ContentProject) -> ContentPatch:
 
 
 def build_mock_titles(project: ContentProject, count: int = 10) -> ContentPatch:
-    seed = project.inspiration or project.title
-    styles = ["情绪共鸣型", "问题型", "警醒型", "深度型", "故事型"]
-    titles = [
-        TitleCandidate(text=f"{seed[:12]}，为什么值得被看见？", style=styles[i % len(styles)])
-        for i in range(count)
-    ]
+    payload = _mock_platform_payload(project, project.humanized or project.draft or _mock_humanized(project))
+    titles = payload["titles"][:count]  # type: ignore[index]
     return ContentPatch(
         intent="generate_titles",
         target_platforms=["all"],
-        summary=f"已生成 {count} 个标题备选。",
+        summary=f"已生成 {len(titles)} 个标题备选。",
         patch={"titles": [item.model_dump(mode="json") for item in titles]},
     )
 
 
 def build_mock_cover_assets(project: ContentProject) -> ContentPatch:
+    payload = _mock_platform_payload(project, project.humanized or project.draft or "")
     title = project.platforms["wechat"].title or project.title
+    cover_prompt = payload.get("cover_prompt", "纪实摄影，暖色生活场景")
     asset = CoverAsset(
         platform="wechat",
-        headline=title[:20] or "生活观察",
+        headline=title[:20] or "生活分享",
         subheadline="真实 · 温和 · 有温度",
-        prompt="纪实摄影，暖色乡村生活，真实人物与环境，避免营销海报感",
+        prompt=cover_prompt,
     )
     return ContentPatch(
         intent="cover_assets",

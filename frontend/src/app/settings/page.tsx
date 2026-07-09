@@ -16,6 +16,7 @@ export default function SettingsPage() {
   const {
     categories,
     addCategory,
+    updateCategory,
     removeCategory,
     reload: reloadCategories,
   } = useContentCategories();
@@ -136,6 +137,10 @@ export default function SettingsPage() {
         categories={categories}
         onAdd={async (payload) => {
           await addCategory(payload);
+          await reloadCategories();
+        }}
+        onUpdate={async (id, payload) => {
+          await updateCategory(id, payload);
           await reloadCategories();
         }}
         onRemove={async (id) => {

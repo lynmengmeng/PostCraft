@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useShell } from "@/components/layout/AppShell";
@@ -11,7 +12,12 @@ import { useContentCategories } from "@/hooks/useContentCategories";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { api, platformLabels } from "@/lib/api";
 import { topicDisplayTitle } from "@/lib/trend-snapshot";
-import type { Platform, Topic, TrendInspirationSnapshot } from "@/lib/types";
+import {
+  resolveTopicSourceType,
+  topicSourceFilterOptions,
+  topicSourceLabels,
+} from "@/lib/topic-source";
+import type { Platform, Topic, TopicSourceType, TrendInspirationSnapshot } from "@/lib/types";
 
 const PAGE_SIZE = 10;
 
@@ -25,6 +31,17 @@ const materialLabels: Record<Topic["material_status"], string> = {
   idea: "仅想法",
   cases: "有素材",
   ready: "可开写",
+};
+
+const priorityLabels: Record<Topic["priority"], string> = {
+  soon: "优先",
+  later: "稍后",
+};
+
+const topicStatusLabels: Record<NonNullable<Topic["status"]>, string> = {
+  open: "待写",
+  writing: "创作中",
+  done: "已完成",
 };
 
 const materialColors: Record<Topic["material_status"], string> = {
@@ -54,21 +71,66 @@ export default function TopicsPage() {
   const { searchQuery } = useShell();
   const { data: items, error, loading, reload } = useBackendQuery(() => api.listTopics(), []);
   const { data: stats } = useBackendQuery(() => api.topicStats(), []);
-  const { categories } = useContentCategories();
+  const { categories, findByName } = useContentCategories();
   const pillarNames = categories.map((c) => c.name);
+
+  function handlePillarChange(name: string) {
+    setPillar(name);
+    const cat = findByName(name);
+    if (cat?.default_tone) setTone(cat.default_tone);
+  }
   const [title, setTitle] = useState("");
   const [pillar, setPillar] = useState("");
   const [tone, setTone] = useState("温和共情");
   const [filterPillar, setFilterPillar] = useState("全部");
+  const [filterSource, setFilterSource] = useState<"全部" | TopicSourceType>("全部");
   const [page, setPage] = useState(1);
   const [actionError, setActionError] = useState("");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [detailSnapshot, setDetailSnapshot] = useState<TrendInspirationSnapshot | null>(null);
+  const [detailTopicId, setDetailTopicId] = useState<string | null>(null);
+
+  const pillarCounts = useMemo(() => {
+    const counts: Record<string, number> = { 未分类: 0 };
+    pillarNames.forEach((name) => {
+      counts[name] = 0;
+    });
+    (items ?? []).forEach((item) => {
+      if (item.content_pillar) {
+        counts[item.content_pillar] = (counts[item.content_pillar] ?? 0) + 1;
+      } else {
+        counts["未分类"] += 1;
+      }
+    });
+    return counts;
+  }, [items, pillarNames]);
+
+  const sourceCounts = useMemo(() => {
+    const counts: Record<TopicSourceType, number> = {
+      direct: 0,
+      manual: 0,
+      screenshot: 0,
+      link: 0,
+      trend: 0,
+    };
+    (items ?? []).forEach((item) => {
+      const source = resolveTopicSourceType(item);
+      counts[source] += 1;
+    });
+    return counts;
+  }, [items]);
 
   const filtered = useMemo(() => {
     let list = items ?? [];
     if (filterPillar !== "全部") {
-      list = list.filter((item) => item.content_pillar === filterPillar);
+      if (filterPillar === "未分类") {
+        list = list.filter((item) => !item.content_pillar);
+      } else {
+        list = list.filter((item) => item.content_pillar === filterPillar);
+      }
+    }
+    if (filterSource !== "全部") {
+      list = list.filter((item) => resolveTopicSourceType(item) === filterSource);
     }
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
@@ -81,7 +143,7 @@ export default function TopicsPage() {
       );
     }
     return list;
-  }, [items, filterPillar, searchQuery]);
+  }, [items, filterPillar, filterSource, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -149,6 +211,45 @@ export default function TopicsPage() {
     }
   }
 
+  async function updateContentPillar(id: string, content_pillar: string) {
+    setUpdatingId(id);
+    setActionError("");
+    try {
+      await api.updateTopic(id, { content_pillar });
+      await reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "更新栏目失败");
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  async function updatePriority(id: string, priority: Topic["priority"]) {
+    setUpdatingId(id);
+    setActionError("");
+    try {
+      await api.updateTopic(id, { priority });
+      await reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "更新优先级失败");
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  async function updateSeries(id: string, series: string) {
+    setUpdatingId(id);
+    setActionError("");
+    try {
+      await api.updateTopic(id, { series });
+      await reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "更新系列失败");
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
   async function remove(id: string) {
     if (!confirm("确定删除这个选题吗？")) return;
     setActionError("");
@@ -162,6 +263,104 @@ export default function TopicsPage() {
 
   return (
     <div className="flex min-h-[calc(100vh-64px)] bg-background">
+      <aside className="hidden w-64 shrink-0 space-y-10 border-r border-outline-variant/50 bg-surface p-8 xl:block">
+        <div>
+          <h3 className="mb-6 text-[11px] font-bold uppercase tracking-[0.15em] text-on-surface-variant">
+            内容栏目
+          </h3>
+          <ul className="space-y-2">
+            <li>
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterPillar("全部");
+                  setPage(1);
+                }}
+                className={`w-full rounded-xl px-4 py-2.5 text-left text-[15px] transition-colors ${
+                  filterPillar === "全部"
+                    ? "bg-primary/10 font-bold text-primary"
+                    : "text-on-surface-variant hover:bg-surface-container-low"
+                }`}
+              >
+                全部选题
+              </button>
+            </li>
+            {pillarNames.map((name) => (
+              <li key={name}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterPillar(name);
+                    setPage(1);
+                  }}
+                  className={`flex w-full items-center justify-between rounded-xl px-4 py-2.5 text-left text-[15px] transition-colors ${
+                    filterPillar === name
+                      ? "bg-primary/10 font-bold text-primary"
+                      : "text-on-surface-variant hover:bg-surface-container-low"
+                  }`}
+                >
+                  <span>{name}</span>
+                  <span className="rounded-full bg-surface-container px-2 py-0.5 text-[11px] font-bold">
+                    {pillarCounts[name] ?? 0}
+                  </span>
+                </button>
+              </li>
+            ))}
+            <li>
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterPillar("未分类");
+                  setPage(1);
+                }}
+                className={`flex w-full items-center justify-between rounded-xl px-4 py-2.5 text-left text-[15px] transition-colors ${
+                  filterPillar === "未分类"
+                    ? "bg-primary/10 font-bold text-primary"
+                    : "text-on-surface-variant hover:bg-surface-container-low"
+                }`}
+              >
+                <span>未分类</span>
+                <span className="rounded-full bg-surface-container px-2 py-0.5 text-[11px] font-bold">
+                  {pillarCounts["未分类"] ?? 0}
+                </span>
+              </button>
+            </li>
+          </ul>
+        </div>
+
+        <div>
+          <h3 className="mb-6 text-[11px] font-bold uppercase tracking-[0.15em] text-on-surface-variant">
+            来源
+          </h3>
+          <ul className="space-y-2">
+            {topicSourceFilterOptions.map(({ key, label }) => {
+              const count = key === "全部" ? (items?.length ?? 0) : sourceCounts[key];
+              return (
+                <li key={key}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterSource(key);
+                      setPage(1);
+                    }}
+                    className={`flex w-full items-center justify-between rounded-xl px-4 py-2.5 text-left text-[15px] transition-colors ${
+                      filterSource === key
+                        ? "bg-primary/10 font-bold text-primary"
+                        : "text-on-surface-variant hover:bg-surface-container-low"
+                    }`}
+                  >
+                    <span>{label}</span>
+                    <span className="rounded-full bg-surface-container px-2 py-0.5 text-[11px] font-bold">
+                      {count}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </aside>
+
       <div className="min-w-0 flex-1">
         <section className="p-6 pb-4 lg:p-8">
           <div className="mb-8">
@@ -184,10 +383,11 @@ export default function TopicsPage() {
                 <CategoryPicker
                   categories={categories}
                   value={pillar}
-                  onChange={setPillar}
+                  onChange={handlePillarChange}
                   allowEmpty
                   emptyLabel="选择栏目（可选）"
                   className="min-w-[200px]"
+                  showHint
                 />
                 <select
                   value={tone}
@@ -214,26 +414,6 @@ export default function TopicsPage() {
               {actionError}
             </p>
           )}
-
-          <div className="mb-6 flex flex-wrap gap-2">
-            {["全部", ...pillarNames].map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => {
-                  setFilterPillar(item);
-                  setPage(1);
-                }}
-                className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-                  filterPillar === item
-                    ? "bg-primary text-on-primary"
-                    : "border border-outline-variant/40 bg-surface text-on-surface-variant hover:bg-surface-container-low"
-                }`}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
         </section>
 
         <section className="px-6 pb-12 lg:px-8">
@@ -249,6 +429,7 @@ export default function TopicsPage() {
                 const progress = materialProgress(item.material_status);
                 const displayTitle = topicDisplayTitle(item);
                 const hasTrend = Boolean(item.trend_snapshot?.analysis?.why_hot);
+                const sourceType = resolveTopicSourceType(item);
 
                 return (
                   <article
@@ -264,9 +445,23 @@ export default function TopicsPage() {
                               热点选题
                             </span>
                           )}
+                          {item.status === "writing" && (
+                            <span className="rounded-full bg-secondary-container/60 px-2.5 py-0.5 text-[11px] font-semibold text-on-surface-variant">
+                              {topicStatusLabels.writing}
+                            </span>
+                          )}
                           <span className="whitespace-nowrap rounded-full bg-surface-container px-2.5 py-0.5 text-[11px] font-medium text-on-surface-variant">
-                            {item.content_pillar || "未分类"}
+                            {topicSourceLabels[sourceType]}
                           </span>
+                          <CategoryPicker
+                            categories={categories}
+                            value={item.content_pillar}
+                            onChange={(name) => void updateContentPillar(item.id, name)}
+                            allowEmpty
+                            emptyLabel="未分类"
+                            size="sm"
+                            className="min-w-[120px]"
+                          />
                           <span className="text-[11px] text-on-surface-variant/70">
                             {formatRelativeTime(item.updated_at || item.created_at)}
                           </span>
@@ -285,6 +480,33 @@ export default function TopicsPage() {
                         <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-on-surface-variant">
                           <span>{item.tone}</span>
                           <span className="text-outline-variant">·</span>
+                          <select
+                            value={item.priority}
+                            disabled={updatingId === item.id}
+                            onChange={(e) =>
+                              void updatePriority(item.id, e.target.value as Topic["priority"])
+                            }
+                            className="rounded-lg border border-outline-variant/30 bg-surface px-2 py-0.5 text-[11px] font-medium outline-none focus:ring-2 focus:ring-primary/20"
+                          >
+                            {(Object.keys(priorityLabels) as Topic["priority"][]).map((key) => (
+                              <option key={key} value={key}>
+                                {priorityLabels[key]}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            defaultValue={item.series}
+                            disabled={updatingId === item.id}
+                            placeholder="系列名（可选）"
+                            onBlur={(e) => {
+                              const next = e.target.value.trim();
+                              if (next !== (item.series ?? "")) {
+                                void updateSeries(item.id, next);
+                              }
+                            }}
+                            className="min-w-[120px] rounded-lg border border-outline-variant/30 bg-surface px-2 py-0.5 text-[11px] outline-none focus:ring-2 focus:ring-primary/20"
+                          />
                           <div className="flex gap-1.5">
                             {item.platforms.map((p) => (
                               <span
@@ -332,20 +554,32 @@ export default function TopicsPage() {
                           {item.trend_snapshot && (
                             <button
                               type="button"
-                              onClick={() => setDetailSnapshot(item.trend_snapshot ?? null)}
+                              onClick={() => {
+                                setDetailTopicId(item.id);
+                                setDetailSnapshot(item.trend_snapshot ?? null);
+                              }}
                               className="inline-flex items-center gap-1 rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
                             >
                               <Icon name="insights" className="text-[16px]" />
                               热点分析
                             </button>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => enterStudio(item.id)}
-                            className="rounded-lg bg-primary px-4 py-1.5 text-xs font-bold text-on-primary transition-opacity hover:opacity-90"
-                          >
-                            进入创作室
-                          </button>
+                          {item.project_id ? (
+                            <Link
+                              href={`/create/${item.project_id}`}
+                              className="inline-flex items-center gap-1 rounded-lg bg-primary px-4 py-1.5 text-xs font-bold text-on-primary transition-opacity hover:opacity-90"
+                            >
+                              继续编辑
+                            </Link>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => enterStudio(item.id)}
+                              className="rounded-lg bg-primary px-4 py-1.5 text-xs font-bold text-on-primary transition-opacity hover:opacity-90"
+                            >
+                              进入创作室
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => remove(item.id)}
@@ -469,7 +703,23 @@ export default function TopicsPage() {
       {detailSnapshot && (
         <TrendAnalysisDetailModal
           snapshot={detailSnapshot}
-          onClose={() => setDetailSnapshot(null)}
+          onClose={() => {
+            setDetailSnapshot(null);
+            setDetailTopicId(null);
+          }}
+          onEnterStudio={
+            detailTopicId ? () => enterStudio(detailTopicId) : undefined
+          }
+          onStartWriting={
+            detailTopicId
+              ? async (idea) => {
+                  if (idea) {
+                    await api.updateTopic(detailTopicId, { title: idea });
+                  }
+                  await enterStudio(detailTopicId);
+                }
+              : undefined
+          }
         />
       )}
     </div>

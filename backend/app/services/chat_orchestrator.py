@@ -194,6 +194,7 @@ class ChatOrchestrator:
         target_platforms: list[str],
         style_profile: AuthorStyleProfile,
         on_delta: StreamCallback = None,
+        content_categories: list[ContentCategory] | None = None,
     ) -> tuple[ContentProject, ContentPatch, ChatMessage]:
         targets = [p for p in target_platforms if p in ALL_PLATFORMS] or ALL_PLATFORMS
         if not (project.humanized or project.draft):
@@ -209,7 +210,11 @@ class ChatOrchestrator:
 
         if self.llm.status().configured:
             patch_data = await self.pipeline.cascade_from_humanized(
-                project, style_profile, list(targets), on_delta=on_delta
+                project,
+                style_profile,
+                list(targets),
+                on_delta=on_delta,
+                content_categories=content_categories,
             )
         else:
             mock = build_mock_platforms(project, list(targets))
@@ -400,8 +405,11 @@ class ChatOrchestrator:
                     ALL_PLATFORMS,
                     on_delta=on_delta,
                     with_titles=True,
+                    content_categories=content_categories,
                 )
-                patch_data = await self._ensure_cover_assets(project, patch_data, style_profile)
+                patch_data = await self._ensure_cover_assets(
+                    project, patch_data, style_profile, content_categories=content_categories
+                )
                 return ContentPatch(
                     intent="generate_all",
                     target_platforms=ALL_PLATFORMS,
@@ -410,7 +418,9 @@ class ChatOrchestrator:
                     changes=self._changes_from_patch(patch_data),
                 )
             patch = build_mock_platforms(project, ALL_PLATFORMS, with_titles=True)
-            patch.patch = await self._ensure_cover_assets(project, patch.patch, style_profile)
+            patch.patch = await self._ensure_cover_assets(
+                project, patch.patch, style_profile, content_categories=content_categories
+            )
             return patch
 
         if parsed.intent == "generate_platform":
@@ -428,10 +438,11 @@ class ChatOrchestrator:
                     style_profile,
                     list(targets),
                     on_delta=on_delta,
+                    content_categories=content_categories,
                 )
                 if not project.cover_assets or "xiaohongshu" in targets or "wechat" in targets:
                     patch_data = await self._ensure_cover_assets(
-                        project, patch_data, style_profile
+                        project, patch_data, style_profile, content_categories=content_categories
                     )
                 elif "wechat" in targets:
                     patch_data = self._finalize_wechat_in_patch(
@@ -457,7 +468,7 @@ class ChatOrchestrator:
             patch = build_mock_platforms(project, list(targets))
             if not project.cover_assets:
                 patch.patch = await self._ensure_cover_assets(
-                    project, patch.patch, style_profile
+                    project, patch.patch, style_profile, content_categories=content_categories
                 )
             return patch
 
@@ -465,7 +476,11 @@ class ChatOrchestrator:
             if self.llm.status().configured:
                 humanized = project.humanized or project.draft or project.inspiration
                 titles = await self.pipeline._generate_titles(
-                    project, style_profile, humanized, parsed.title_count
+                    project,
+                    style_profile,
+                    humanized,
+                    parsed.title_count,
+                    content_categories=content_categories,
                 )
                 return ContentPatch(
                     intent="generate_titles",
@@ -481,7 +496,12 @@ class ChatOrchestrator:
                 platforms = {
                     k: v.model_dump(mode="json") for k, v in project.platforms.items()
                 }
-                assets = await self.pipeline._generate_cover_prompts(project, style_profile, platforms)
+                assets = await self.pipeline._generate_cover_prompts(
+                    project,
+                    style_profile,
+                    platforms,
+                    content_categories=content_categories,
+                )
                 for asset in assets:
                     base = asset.get("prompt") or ""
                     asset["prompt"] = f"{style_hint}。{base}" if base else style_hint
@@ -781,6 +801,7 @@ class ChatOrchestrator:
         project: ContentProject,
         patch_data: dict[str, Any],
         style_profile: AuthorStyleProfile,
+        content_categories: list[ContentCategory] | None = None,
     ) -> dict[str, Any]:
         platforms = self._platform_dict_from_patch(project, patch_data)
         if not platforms:
@@ -791,6 +812,7 @@ class ChatOrchestrator:
             project,
             style_profile,
             platforms,
+            content_categories=content_categories,
         )
         existing = [a.model_dump(mode="json") for a in project.cover_assets]
         if patch_data.get("cover_assets"):

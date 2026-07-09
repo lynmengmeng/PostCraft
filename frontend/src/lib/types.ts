@@ -143,10 +143,19 @@ export interface ProjectDraftExport {
 
 export type ProjectDraftImportPayload = Omit<ProjectDraftExport, "exported_at">;
 
+export type ProjectSourceType = "direct" | "topic" | "inspiration" | "trend";
+export type TopicStatus = "open" | "writing" | "done";
+
 export interface ContentProject {
   id: string;
   title: string;
   inspiration: string;
+  topic_id?: string | null;
+  topic_title?: string;
+  source_type?: ProjectSourceType;
+  source_url?: string;
+  image_url?: string;
+  trend_snapshot?: TrendInspirationSnapshot | null;
   topic_meta: TopicMeta;
   draft: string;
   humanized: string;
@@ -186,6 +195,7 @@ export interface Inspiration {
   image_url?: string;
   is_highlight?: boolean;
   tags: string[];
+  topic_id?: string | null;
   trend_snapshot?: TrendInspirationSnapshot | null;
   created_at: string;
 }
@@ -204,6 +214,8 @@ export interface TopicStats {
   top_tone: string | null;
 }
 
+export type TopicSourceType = "direct" | "manual" | "screenshot" | "link" | "trend";
+
 export interface Topic {
   id: string;
   title: string;
@@ -216,7 +228,12 @@ export interface Topic {
   priority: "soon" | "later";
   series: string;
   inspiration: string;
+  source_type?: TopicSourceType;
+  source_url?: string;
+  image_url?: string;
   trend_snapshot?: TrendInspirationSnapshot | null;
+  project_id?: string | null;
+  status?: TopicStatus;
   created_at: string;
   updated_at: string;
 }
@@ -228,11 +245,24 @@ export interface AuthorStyleProfile {
   platform_defaults: Record<string, string>;
 }
 
+export interface CategoryPlatformHints {
+  wechat: string;
+  xiaohongshu: string;
+  douyin: string;
+}
+
 export interface ContentCategory {
   id: string;
   name: string;
   description: string;
   prompt_hint: string;
+  structure_hint: string;
+  platform_hints: CategoryPlatformHints;
+  title_style: string;
+  cover_mood: string;
+  default_layout: WechatLayoutPreset;
+  default_tone: string;
+  example_topics: string[];
   builtin: boolean;
 }
 

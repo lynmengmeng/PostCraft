@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
-import { api } from "@/lib/api";
+import { api, type ContentCategoryPayload } from "@/lib/api";
 import type { ContentCategory } from "@/lib/types";
 
 export function useContentCategories() {
@@ -14,16 +14,23 @@ export function useContentCategories() {
   const categories = data?.categories ?? [];
 
   const addCategory = useCallback(
-    async (payload: {
-      name: string;
-      description?: string;
-      prompt_hint?: string;
-    }) => {
+    async (payload: ContentCategoryPayload & { name: string }) => {
       const created = await api.createContentCategory(payload);
       setData((prev) => ({
         categories: [...(prev?.categories ?? []), created],
       }));
       return created;
+    },
+    [setData],
+  );
+
+  const updateCategory = useCallback(
+    async (id: string, payload: ContentCategoryPayload) => {
+      const updated = await api.updateContentCategory(id, payload);
+      setData((prev) => ({
+        categories: (prev?.categories ?? []).map((c) => (c.id === id ? updated : c)),
+      }));
+      return updated;
     },
     [setData],
   );
@@ -50,6 +57,7 @@ export function useContentCategories() {
     loading,
     reload,
     addCategory,
+    updateCategory,
     removeCategory,
     findByName,
   };

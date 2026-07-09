@@ -5,11 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.models.schemas import (
     ContentProject,
     DouyinContent,
-    Inspiration,
     Topic,
     TrendAnalysis,
     TrendAnalysisRequest,
-    TrendInspirationSnapshot,
     TrendRelatedItem,
     TrendToTopicRequest,
     TrendsBoardResponse,
@@ -18,16 +16,15 @@ from app.models.schemas import (
     new_id,
 )
 from app.services.trends_service import TrendsService
-from app.services.trends_helpers import collect_saved_trend_ids, inspiration_from_trend
+from app.services.trends_helpers import collect_saved_trend_ids
 from app.deps.auth import get_scope_kwargs, require_auth
 from sqlalchemy.orm import Session
 from app.db.database import get_db
-from app.services.repository import InspirationRepository, TopicRepository, project_repo
+from app.services.repository import TopicRepository, project_repo
 
 router = APIRouter(prefix="/tools", tags=["tools"], dependencies=[Depends(require_auth)])
 
 topic_repo = TopicRepository()
-inspiration_repo = InspirationRepository()
 
 
 def _scope() -> dict[str, str | bool | None]:
@@ -97,39 +94,11 @@ def trend_to_topic(
         inspiration=payload.inspiration or f"热点工具收录：{title}",
         material_status="idea",
         priority="soon",
+        source_type="trend",
+        source_url=payload.source_url,
         trend_snapshot=payload.trend_snapshot,
     )
     return topic_repo.create(db, topic, **_scope())
-
-
-@router.post("/trends/to-inspiration", response_model=Inspiration)
-def trend_to_inspiration(
-    payload: TrendToTopicRequest,
-    db: Session = Depends(get_db),
-) -> Inspiration:
-    title = payload.title.strip()
-    if not title:
-        raise HTTPException(status_code=400, detail="标题不能为空")
-    content = payload.inspiration.strip() or f"热点：{title}"
-    tags = inspiration_from_trend(
-        ["热点工具", payload.content_pillar or "热点观察"],
-        payload.trend_id.strip(),
-    )
-    snapshot = payload.trend_snapshot
-    if snapshot is None and payload.trend_id.strip():
-        snapshot = TrendInspirationSnapshot(
-            trend_id=payload.trend_id.strip(),
-            title=title,
-            url=payload.source_url.strip(),
-        )
-    inspiration = Inspiration(
-        content=content,
-        source_type="link",
-        source_url=payload.source_url.strip(),
-        tags=tags,
-        trend_snapshot=snapshot,
-    )
-    return inspiration_repo.create(db, inspiration, **_scope())
 
 
 @router.post("/trends/to-project", response_model=ContentProject)

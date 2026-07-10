@@ -99,12 +99,12 @@ class ContentPipeline:
         if on_delta:
             await on_delta("正在撰写观察型初稿…")
 
-        default_task = self._default_draft_task(project, content_categories)
+        default_task = self._draft_generation_task(project, message, content_categories)
         draft = await self._run_markdown_skill(
             "general-writing",
             project,
             style_profile,
-            message or default_task,
+            default_task,
             input_text=project.inspiration or project.title,
             content_categories=content_categories,
             include_chat_context=True,
@@ -596,6 +596,24 @@ class ContentPipeline:
         if hint:
             return hint
         return "基于灵感撰写只解决一个具体问题的观察型文章初稿，开头直接从痛点切入，不要背景综述"
+
+    def _draft_generation_task(
+        self,
+        project: ContentProject,
+        message: str,
+        content_categories: list[ContentCategory] | None = None,
+    ) -> str:
+        default = self._default_draft_task(project, content_categories)
+        trimmed = message.strip()
+        prior_user_turns = sum(1 for item in project.chat_history if item.role == "user")
+        if prior_user_turns > 1:
+            if trimmed:
+                return (
+                    f"{trimmed}\n\n"
+                    "请结合项目灵感与最近对话中的补充要求，撰写观察型初稿。"
+                )
+            return "请结合项目灵感与最近对话中的补充要求，撰写观察型初稿。"
+        return trimmed or default
 
     def _category_block(
         self,

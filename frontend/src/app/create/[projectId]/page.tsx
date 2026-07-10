@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ContentEditor, type EditorTab } from "@/components/studio/ContentEditor";
-import { ChatComposer, type ChatScope } from "@/components/studio/ChatComposer";
+import { ChatComposer } from "@/components/studio/ChatComposer";
 import { ChatMessageList } from "@/components/studio/ChatMessageList";
 import { ChatSummaryExpandable } from "@/components/studio/ChatSummaryExpandable";
 import { CascadeBanner } from "@/components/studio/CascadeBanner";
 import { DraftReadyPanel } from "@/components/studio/DraftReadyPanel";
+import { DraftStartPanel } from "@/components/studio/DraftStartPanel";
 import { PreviewPlatformTabs } from "@/components/studio/PreviewPlatformTabs";
 import { QuickCommandsPopover } from "@/components/studio/QuickCommandsPopover";
 import { StudioHeaderActions } from "@/components/studio/StudioHeaderActions";
@@ -39,11 +40,14 @@ import {
 import {
   ALL_PLATFORMS,
   appendStreamingDelta,
+  getDefaultChatScope,
   getChatContextPlatform,
   hasDraft,
   hasLaterChatMessages,
   hasPlatformContent,
   platformIcons,
+  resolveEditTarget,
+  type ChatScope,
   type MobileStudioPanel,
   type StudioViewMode,
 } from "@/lib/studio-utils";
@@ -96,7 +100,6 @@ export default function CreateStudioPage() {
   const router = useRouter();
   const { config } = useAuth();
   const standaloneViewport = config?.auth_required === false;
-  const autoStarted = useRef(false);
   const chatAbortRef = useRef<AbortController | null>(null);
   const [project, setProject] = useState<ContentProject | null>(null);
   const [editorTab, setEditorTab] = useState<EditorTab>("draft");
@@ -118,10 +121,9 @@ export default function CreateStudioPage() {
   const [exportingDraft, setExportingDraft] = useState(false);
   const [generatingXhsCarousel, setGeneratingXhsCarousel] = useState(false);
   const [actionInfo, setActionInfo] = useState("");
-  const [autoDraftPending, setAutoDraftPending] = useState(false);
   const { categories, findByName } = useContentCategories();
   const { data: styleProfile } = useBackendQuery(() => api.getStyleProfile(), []);
-  const [chatScope, setChatScope] = useState<ChatScope>("auto");
+  const [chatScope, setChatScope] = useState<ChatScope>("draft");
 
   const sortedTitleEntries = useMemo(() => {
     if (!project?.titles.length) return [];
@@ -151,7 +153,6 @@ export default function CreateStudioPage() {
     setCascading(false);
     setRegeneratingId(null);
     setStreamingText("");
-    setAutoDraftPending(false);
     setActionInfo("已停止生成");
     setTimeout(() => setActionInfo(""), 3000);
   }
@@ -164,23 +165,16 @@ export default function CreateStudioPage() {
   useEffect(() => {
     api
       .getProject(params.projectId)
-      .then(async (loaded) => {
+      .then((loaded) => {
         setProject(loaded);
-        if (
-          !autoStarted.current &&
-          loaded.chat_history.length === 0 &&
-          !hasDraft(loaded)
-        ) {
-          autoStarted.current = true;
-          setAutoDraftPending(true);
-          const seed = loaded.inspiration.trim();
-          await sendChat(seed, loaded, { action: "generate_draft" });
-        }
       })
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.projectId]);
+
+  useEffect(() => {
+    setChatScope(getDefaultChatScope(editorTab));
+  }, [editorTab]);
 
   async function sendChat(text: string, current = project, options?: ChatOptions): Promise<boolean> {
     if (!current || sending) return false;
@@ -200,8 +194,9 @@ export default function CreateStudioPage() {
     };
 
     const signal = beginAbortableRequest();
+    const editTarget = resolveEditTarget(chatScope);
     const chatPlatform =
-      chatScope === "auto"
+      chatScope === "draft"
         ? getChatContextPlatform(editorTab, current)
         : chatScope === "all"
           ? "wechat"
@@ -209,7 +204,7 @@ export default function CreateStudioPage() {
     const scopeTargets =
       chatScope === "all"
         ? (["wechat", "xiaohongshu", "douyin"] as Platform[])
-        : chatScope !== "auto"
+        : chatScope !== "draft"
           ? [chatScope]
           : options?.target_platforms;
 
@@ -232,6 +227,7 @@ export default function CreateStudioPage() {
         },
         {
           ...options,
+          edit_target: options?.edit_target ?? editTarget,
           ...(scopeTargets?.length ? { target_platforms: scopeTargets } : {}),
           ...(attachmentUrls.length ? { attachment_urls: attachmentUrls } : {}),
           signal,
@@ -239,7 +235,6 @@ export default function CreateStudioPage() {
       );
       setProject(result.project);
       setStreamingText("");
-      setAutoDraftPending(false);
       trackEvent("chat_message", {
         projectId: current.id,
         intent: result.patch?.intent,
@@ -263,7 +258,6 @@ export default function CreateStudioPage() {
       if (text.trim()) setChatMessage(text);
       setError(err instanceof Error ? err.message : "发送失败");
       setStreamingText("");
-      setAutoDraftPending(false);
       return false;
     } finally {
       setSending(false);
@@ -398,18 +392,30 @@ export default function CreateStudioPage() {
     trackEvent("insert_health_disclaimer", { projectId: project.id });
   }
 
+  async function generateDraft() {
+    if (!project || sending) return;
+    const hasPriorChat = project.chat_history.some((item) => item.role === "user");
+    const message = hasPriorChat ? "请根据以上对话与灵感撰写观察型初稿" : "";
+    const ok = await sendChat(message, project, {
+      action: "generate_draft",
+      edit_target: "draft",
+    });
+    if (ok) selectEditorTab("draft");
+  }
+
   async function generatePlatform(target: Platform | "all") {
     if (!project || !hasDraft(project)) {
       setError("请先生成并确认初稿");
       return;
     }
     if (target === "all") {
-      await sendChat("", project, { action: "generate_all" });
+      await sendChat("", project, { action: "generate_all", edit_target: "platform" });
       selectEditorTab("wechat");
       return;
     }
     await sendChat("", project, {
       action: "generate_platform",
+      edit_target: "platform",
       target_platforms: [target],
     });
     selectEditorTab(target);
@@ -606,8 +612,15 @@ export default function CreateStudioPage() {
           AI 协作
         </span>
       </div>
-      {hasDraft(project) && (
+      {hasDraft(project) ? (
         <DraftReadyPanel sending={sending} onGenerate={(t) => void generatePlatform(t)} />
+      ) : (
+        <DraftStartPanel
+          inspiration={project.inspiration}
+          sending={sending}
+          hasPriorChat={project.chat_history.some((item) => item.role === "user")}
+          onGenerate={() => void generateDraft()}
+        />
       )}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {project.chat_summary && (
@@ -620,7 +633,7 @@ export default function CreateStudioPage() {
           sending={sending}
           streamingText={streamingText}
           regeneratingId={regeneratingId}
-          autoDraftPending={autoDraftPending}
+          showWelcome={!hasDraft(project) && project.chat_history.length === 0}
           onRegenerate={(id) => void regenerateAssistantMessage(id)}
         />
       </div>
@@ -630,6 +643,7 @@ export default function CreateStudioPage() {
           message={chatMessage}
           onMessageChange={setChatMessage}
           sending={sending}
+          hasDraft={hasDraft(project)}
           pendingAttachments={pendingAttachments}
           chatScope={chatScope}
           onChatScopeChange={setChatScope}

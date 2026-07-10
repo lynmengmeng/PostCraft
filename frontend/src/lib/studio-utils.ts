@@ -1,5 +1,8 @@
 import type { EditorTab } from "@/components/studio/ContentEditor";
 import type { ContentProject, Platform } from "@/lib/types";
+import { platformLabels } from "@/lib/api";
+
+export type ChatScope = "draft" | Platform | "all";
 
 export const ALL_PLATFORMS: Platform[] = ["wechat", "xiaohongshu", "douyin"];
 
@@ -22,6 +25,38 @@ export const quickCommands = [
   "一键生成全部轮播图",
   "撤销上一版",
 ];
+
+export function resolveEditTarget(chatScope: ChatScope): "draft" | "platform" {
+  return chatScope === "draft" ? "draft" : "platform";
+}
+
+export function getDefaultChatScope(editorTab: EditorTab): ChatScope {
+  return editorTab === "draft" ? "draft" : editorTab;
+}
+
+export function getChatScopeHint(chatScope: ChatScope, hasDraft: boolean): string {
+  if (chatScope === "draft") {
+    return hasDraft
+      ? "修改观察型初稿（humanized），不会直接改动各平台预览"
+      : "记录写作要求与素材；生成初稿前不会改写内容";
+  }
+  if (chatScope === "all") {
+    return "根据指令更新初稿，并同步到已有平台版本";
+  }
+  return `只修改${platformLabels[chatScope]}平台内容，初稿与其他平台不变`;
+}
+
+export function getChatScopePlaceholder(chatScope: ChatScope, hasDraft: boolean): string {
+  if (chatScope === "draft") {
+    return hasDraft
+      ? "继续打磨初稿，例如：更温和一点、加个人经历…"
+      : "补充角度、素材或语气，例如：从回农村经历切入、语气温和…";
+  }
+  if (chatScope === "all") {
+    return "说明要同步到三平台的修改，例如：开头更犀利、整体精简…";
+  }
+  return `说明要修改的${platformLabels[chatScope]}内容，例如：标题更吸引人、第二段缩短…`;
+}
 
 export function appendStreamingDelta(prev: string, delta: string): string {
   return prev ? `${prev}\n${delta}` : delta;

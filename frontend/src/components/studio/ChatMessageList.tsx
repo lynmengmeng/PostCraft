@@ -21,7 +21,7 @@ interface ChatMessageListProps {
   sending: boolean;
   streamingText: string;
   regeneratingId: string | null;
-  autoDraftPending: boolean;
+  showWelcome?: boolean;
   onRegenerate: (messageId: string) => void;
 }
 
@@ -30,11 +30,11 @@ export function ChatMessageList({
   sending,
   streamingText,
   regeneratingId,
-  autoDraftPending,
+  showWelcome = false,
   onRegenerate,
 }: ChatMessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const showTyping = sending && !streamingText && !autoDraftPending;
+  const showTyping = sending && !streamingText;
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const el = scrollRef.current;
@@ -47,17 +47,16 @@ export function ChatMessageList({
       scrollToBottom();
     });
     return () => cancelAnimationFrame(frame);
-  }, [chatHistory.length, streamingText, sending, autoDraftPending, scrollToBottom]);
+  }, [chatHistory.length, streamingText, sending, showWelcome, scrollToBottom]);
 
   return (
     <div
       ref={scrollRef}
       className="custom-scrollbar min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden p-4"
     >
-      {autoDraftPending && (
-        <div className="flex items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-on-surface">
-          <Icon name="progress_activity" className="animate-spin text-[18px] text-primary" />
-          正在根据灵感撰写初稿…
+      {showWelcome && (
+        <div className="rounded-xl border border-outline-variant/15 bg-surface-container-low/60 px-4 py-3 text-sm leading-relaxed text-on-surface-variant">
+          欢迎进入创作室。你可以先聊写作角度与素材，再点上方「生成观察型初稿」；也可以直接生成。
         </div>
       )}
 

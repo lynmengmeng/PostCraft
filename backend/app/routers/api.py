@@ -444,6 +444,7 @@ async def _chat_once(
         target_platforms=payload.target_platforms,
         attachment_urls=payload.attachment_urls or None,
         content_categories=categories,
+        edit_target=payload.edit_target,
     )
     saved = _save_project(db, updated)
     return {

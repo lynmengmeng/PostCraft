@@ -4,15 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { resolveImageUrl } from "@/lib/export";
 import { editableInputClassName, editableInputProps } from "@/lib/editable-input";
+import { getChatScopeHint, getChatScopePlaceholder, type ChatScope } from "@/lib/studio-utils";
 import type { Platform } from "@/lib/types";
 import { platformLabels } from "@/lib/api";
-
-export type ChatScope = "auto" | Platform | "all";
 
 interface ChatComposerProps {
   message: string;
   onMessageChange: (value: string) => void;
   sending: boolean;
+  hasDraft: boolean;
   pendingAttachments: string[];
   chatScope: ChatScope;
   onChatScopeChange: (scope: ChatScope) => void;
@@ -23,18 +23,17 @@ interface ChatComposerProps {
   onStop: () => void;
 }
 
-const scopeOptions: { key: ChatScope; label: string }[] = [
-  { key: "auto", label: "跟随编辑区" },
-  { key: "wechat", label: platformLabels.wechat },
-  { key: "xiaohongshu", label: platformLabels.xiaohongshu },
-  { key: "douyin", label: platformLabels.douyin },
-  { key: "all", label: "全平台" },
-];
+const draftScope: { key: ChatScope; label: string } = { key: "draft", label: "初稿" };
+const platformScopes: { key: ChatScope; label: string }[] = (
+  ["wechat", "xiaohongshu", "douyin"] as Platform[]
+).map((key) => ({ key, label: platformLabels[key] }));
+const allScope: { key: ChatScope; label: string } = { key: "all", label: "全平台" };
 
 export function ChatComposer({
   message,
   onMessageChange,
   sending,
+  hasDraft,
   pendingAttachments,
   chatScope,
   onChatScopeChange,
@@ -73,23 +72,57 @@ export function ChatComposer({
     }
   }
 
+  const scopeHint = getChatScopeHint(chatScope, hasDraft);
+  const placeholder = getChatScopePlaceholder(chatScope, hasDraft);
+
   return (
     <div className={`space-y-3 ${editableInputClassName}`} translate="no">
-      <div className="flex flex-wrap gap-2">
-        {scopeOptions.map(({ key, label }) => (
+      <div className="space-y-2">
+        <p className="text-[11px] font-medium text-on-surface-variant">修改范围</p>
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            key={key}
             type="button"
-            onClick={() => onChatScopeChange(key)}
+            onClick={() => onChatScopeChange(draftScope.key)}
             className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${
-              chatScope === key
+              chatScope === draftScope.key
                 ? "bg-primary text-on-primary"
                 : "bg-surface-container-low text-on-surface-variant ring-1 ring-outline-variant/30"
             }`}
           >
-            {label}
+            {draftScope.label}
           </button>
-        ))}
+          <span className="text-[10px] text-on-surface-variant/50">|</span>
+          {platformScopes.map(({ key, label }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onChatScopeChange(key)}
+              disabled={!hasDraft}
+              title={!hasDraft ? "请先生成初稿" : undefined}
+              className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                chatScope === key
+                  ? "bg-primary text-on-primary"
+                  : "bg-surface-container-low text-on-surface-variant ring-1 ring-outline-variant/30"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => onChatScopeChange(allScope.key)}
+            disabled={!hasDraft}
+            title={!hasDraft ? "请先生成初稿" : undefined}
+            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              chatScope === allScope.key
+                ? "bg-primary text-on-primary"
+                : "bg-surface-container-low text-on-surface-variant ring-1 ring-outline-variant/30"
+            }`}
+          >
+            {allScope.label}
+          </button>
+        </div>
+        <p className="text-[11px] leading-relaxed text-on-surface-variant">{scopeHint}</p>
       </div>
       {pendingAttachments.length > 0 && (
         <div className="space-y-2">
@@ -152,7 +185,7 @@ export function ChatComposer({
               void submit();
             }
           }}
-          placeholder="继续打磨初稿、调整配图位置，或上传素材后说明插入位置…"
+          placeholder={placeholder}
           className={`${editableInputClassName} h-20 w-full resize-none rounded-xl border border-outline-variant/20 bg-surface-container-low p-3 pr-20 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary`}
           {...editableInputProps}
         />

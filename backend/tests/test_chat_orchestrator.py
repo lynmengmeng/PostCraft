@@ -160,6 +160,42 @@ def test_humanize_without_platform_content_stays_draft_only() -> None:
     assert parsed.target_platforms == []
 
 
+def test_edit_target_draft_skips_platform_scope_routing() -> None:
+    orch = _orchestrator()
+    project = _project_with_wechat()
+    project.platforms["xiaohongshu"] = XiaohongshuContent(body="小红书笔记正文")
+    parsed = orch._resolve_intent(
+        "更温和一点",
+        "xiaohongshu",
+        None,
+        ["xiaohongshu"],
+        project,
+        edit_target="draft",
+    )
+    assert parsed.intent == "refine_draft"
+
+
+async def _chat_message(project: ContentProject, message: str) -> tuple[str, ContentProject]:
+    orch = _orchestrator()
+    style = AuthorStyleProfile()
+    updated, patch, _ = await orch.handle_message(
+        project,
+        message,
+        "wechat",
+        style,
+        edit_target="draft",
+    )
+    return patch.intent, updated
+
+
+def test_pre_draft_chat_records_context_without_patch() -> None:
+    project = ContentProject(inspiration="测试灵感")
+    intent, updated = asyncio.run(_chat_message(project, "从回农村经历切入，语气温和"))
+    assert intent == "chat_context"
+    assert not (updated.humanized or updated.draft)
+    assert len(updated.chat_history) == 2
+
+
 def test_adjust_draft_stays_refine_with_xhs_scope_and_content() -> None:
     orch = _orchestrator()
     project = _project_with_wechat()
@@ -170,9 +206,9 @@ def test_adjust_draft_stays_refine_with_xhs_scope_and_content() -> None:
         None,
         ["xiaohongshu"],
         project,
+        edit_target="draft",
     )
     assert parsed.intent == "refine_draft"
-    assert parsed.target_platforms == []
 
 
 async def _rollback_chat(project: ContentProject) -> tuple[str, ContentProject]:

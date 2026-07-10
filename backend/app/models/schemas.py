@@ -338,6 +338,7 @@ class ChatRequest(BaseModel):
     message: str = ""
     selected_platform: Platform = "wechat"
     stream: bool = False
+    edit_target: Literal["draft", "platform"] | None = None
     action: Literal[
         "",
         "generate_draft",

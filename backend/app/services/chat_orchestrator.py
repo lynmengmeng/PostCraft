@@ -92,8 +92,23 @@ def _apply_scope_to_intent(
     selected_platform: str,
     target_platforms: list[str] | None,
     message: str = "",
+    edit_target: str | None = None,
 ) -> ParsedIntent:
     """已有平台内容且用户选了作用域时，将初稿润色路由为平台 patch。"""
+    if edit_target == "draft":
+        if parsed.intent == "humanize":
+            return ParsedIntent(
+                intent="humanize",
+                target_platforms=[],
+                constraints=parsed.constraints,
+                title_count=parsed.title_count,
+                title_search_friendly=parsed.title_search_friendly,
+                patch_fields=parsed.patch_fields,
+                layout_preset=parsed.layout_preset,
+                xhs_page_count=parsed.xhs_page_count,
+            )
+        return parsed
+
     scoped_targets = _scoped_platform_targets(project, selected_platform, target_platforms)
 
     if parsed.intent == "refine_draft":
@@ -195,6 +210,7 @@ class ChatOrchestrator:
         target_platforms: list[str] | None = None,
         attachment_urls: list[str] | None = None,
         content_categories: list[ContentCategory] | None = None,
+        edit_target: str | None = None,
     ) -> tuple[ContentProject, ContentPatch, ChatMessage]:
         parsed = self._resolve_intent(
             message,
@@ -203,6 +219,7 @@ class ChatOrchestrator:
             target_platforms,
             project,
             attachment_urls=attachment_urls,
+            edit_target=edit_target,
         )
         user_content = message.strip() or self._default_user_label(parsed)
         if (
@@ -222,6 +239,23 @@ class ChatOrchestrator:
                 attachment_urls=list(attachment_urls or []),
             )
         )
+
+        has_draft = bool(project.humanized or project.draft)
+        if (
+            not has_draft
+            and not action
+            and message.strip()
+            and parsed.intent in {"refine_draft", "humanize"}
+        ):
+            patch = ContentPatch(
+                intent="chat_context",
+                target_platforms=[],
+                summary="已记录你的补充。准备好后点击「生成初稿」，我会结合灵感与以上内容撰写观察型初稿。",
+                patch={},
+            )
+            assistant = ChatMessage(role="assistant", content=patch.summary)
+            project.chat_history.append(assistant)
+            return project, patch, assistant
 
         if parsed.intent == "rollback":
             if len(project.versions) < 2:
@@ -385,6 +419,7 @@ class ChatOrchestrator:
         target_platforms: list[str] | None,
         project: ContentProject,
         attachment_urls: list[str] | None = None,
+        edit_target: str | None = None,
     ) -> ParsedIntent:
         if action == "generate_draft":
             return ParsedIntent("generate_draft", [], [])
@@ -405,7 +440,12 @@ class ChatOrchestrator:
         if attachment_urls and parsed.intent == "refine_draft":
             return ParsedIntent("layout_images", ["wechat"], [])
         return _apply_scope_to_intent(
-            parsed, project, selected_platform, target_platforms, message
+            parsed,
+            project,
+            selected_platform,
+            target_platforms,
+            message,
+            edit_target,
         )
 
     def _coerce_draft_refine_intent(
@@ -468,10 +508,19 @@ class ChatOrchestrator:
                     on_delta=on_delta,
                     content_categories=content_categories,
                 )
+                prior_user_turns = sum(
+                    1 for item in project.chat_history if item.role == "user"
+                )
+                summary = (
+                    "已结合灵感与对话内容生成观察型初稿，可在「初稿」区查看并继续打磨。"
+                    "满意后再生成各平台内容。"
+                    if prior_user_turns > 1
+                    else "已根据灵感生成观察型初稿，可在「初稿」区查看并继续对话打磨。满意后再生成各平台内容。"
+                )
                 return ContentPatch(
                     intent="generate_draft",
                     target_platforms=[],
-                    summary="已根据灵感生成观察型初稿，可在「初稿」区查看并继续对话打磨。满意后再生成各平台内容。",
+                    summary=summary,
                     patch=patch_data,
                     changes=self._changes_from_patch(patch_data),
                 )

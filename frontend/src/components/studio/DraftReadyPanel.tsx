@@ -55,7 +55,7 @@ export function DraftReadyPanel({ sending, onGenerate }: DraftReadyPanelProps) {
       {open && (
         <div className="border-t border-outline-variant/10 px-4 pb-4 pt-2">
           <p className="mb-3 text-[12px] leading-relaxed text-on-surface-variant">
-            继续对话可打磨初稿。满意后，再按需生成各平台内容。
+            在对话区选「初稿」可继续打磨观察型初稿；选具体平台则只改该平台内容。
           </p>
           <div className="flex flex-wrap gap-2">
             {ALL_PLATFORMS.map((item) => (

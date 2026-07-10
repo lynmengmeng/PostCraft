@@ -120,6 +120,7 @@ export type ContentCategoryPayload = {
 
 export interface ChatOptions {
   action?: "generate_draft" | "generate_platform" | "generate_all" | "refine_draft" | "layout_images";
+  edit_target?: "draft" | "platform";
   target_platforms?: Platform[];
   attachment_urls?: string[];
   signal?: AbortSignal;
@@ -203,6 +204,7 @@ export const api = {
       selected_platform: selectedPlatform,
       stream,
       ...(options?.action ? { action: options.action } : {}),
+      ...(options?.edit_target ? { edit_target: options.edit_target } : {}),
       ...(options?.target_platforms ? { target_platforms: options.target_platforms } : {}),
       ...(options?.attachment_urls?.length ? { attachment_urls: options.attachment_urls } : {}),
     };

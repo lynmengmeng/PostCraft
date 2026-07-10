@@ -27,6 +27,17 @@ LAYOUT_PRESET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
+# 明确要改初稿的表述，优先于配图/小红书张数等规则
+RE_DRAFT_REFINE = re.compile(
+    r"调整.*初稿|初稿.*调整|完善.*初稿|打磨.*初稿|修改.*初稿|"
+    r"继续调整|根据.*调整|优化.*初稿|改.*初稿"
+)
+
+# 小红书配图张数：消息里需出现配图相关词，不能仅靠当前 Tab 为小红薯
+RE_XHS_IMAGE_CONTEXT = re.compile(
+    r"图|轮播|配图|小红书|笔记|单图|(?:\d+|一|两|三|四|五|六)\s*张"
+)
+
 # 已有初稿时，较长消息视为补充素材/修改意见，优先 refine 而非误触 fact_check
 NARRATIVE_REFINE_THRESHOLD = 80
 
@@ -117,11 +128,11 @@ def parse_intent(
     if not narrative_refine and RE_EXPLICIT_FACT_CHECK.search(text):
         return ParsedIntent("fact_check", [], [])
 
+    if RE_DRAFT_REFINE.search(text):
+        return ParsedIntent("refine_draft", [], [])
+
     xhs_count = parse_xhs_page_count_request(text)
-    if xhs_count is not None and (
-        selected_platform == "xiaohongshu"
-        or re.search(r"图|轮播|配图|小红书|笔记|单图", text)
-    ):
+    if xhs_count is not None and RE_XHS_IMAGE_CONTEXT.search(text):
         return ParsedIntent(
             intent="xhs_page_count",
             target_platforms=["xiaohongshu"],

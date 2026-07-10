@@ -401,7 +401,6 @@ def restore_version(
     restored = ContentProject.model_validate(deepcopy(target.snapshot))
     restored.id = project.id
     restored.versions = project.versions
-    restored.chat_history = list(project.chat_history)
     restored.chat_history.append(
         ChatMessage(role="assistant", content=f"已恢复到版本：{target.label}")
     )

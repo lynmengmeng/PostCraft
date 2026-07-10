@@ -90,6 +90,7 @@ def test_parse_xhs_page_count_request_single_image():
     assert parse_xhs_page_count_request("我只需要处理成只要一张图片") == 1
     assert parse_xhs_page_count_request("改成单图笔记") == 1
     assert parse_xhs_page_count_request("配图改成 3 张") == 3
+    assert parse_xhs_page_count_request("调整成一张初稿") is None
 
 
 def test_estimate_page_count_single_image():

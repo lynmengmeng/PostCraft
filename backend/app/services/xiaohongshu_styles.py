@@ -238,7 +238,12 @@ def parse_xhs_page_count_request(text: str) -> int | None:
     if match:
         return max(XHS_MIN_PAGES, min(XHS_MAX_PAGES, int(match.group(1))))
 
-    if re.search(r"一\s*张(?:图|图片|配图)?", normalized):
+    if re.search(r"初稿|稿子|版本|平台", normalized) and not re.search(
+        r"(?:图|图片|配图|轮播)", normalized
+    ):
+        return None
+
+    if re.search(r"一\s*张(?:图|图片|配图|轮播)?", normalized):
         return 1
 
     return None

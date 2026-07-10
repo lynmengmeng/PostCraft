@@ -701,8 +701,33 @@ topic_repo = TopicRepository()
 style_repo = StyleRepository()
 category_repo = CategoryRepository()
 
+_PATCH_ROOT_KEYS = frozenset({"draft", "humanized", "titles", "cover_assets"})
+_PATCH_PLATFORMS = frozenset({"wechat", "xiaohongshu", "douyin"})
+
+
+def is_allowed_patch_path(path: str) -> bool:
+    if path in _PATCH_ROOT_KEYS:
+        return True
+    if not path.startswith("platforms."):
+        return False
+    rest = path[len("platforms.") :]
+    platform_key = rest.split(".", 1)[0]
+    return platform_key in _PATCH_PLATFORMS
+
+
+def validate_patch_paths(patch: dict[str, Any]) -> None:
+    for path, value in patch.items():
+        if not is_allowed_patch_path(path):
+            raise ValueError(f"不允许的 patch 路径：{path}")
+        if path in {"platforms.douyin.script"} and value is not None and not isinstance(value, list):
+            raise ValueError("platforms.douyin.script 必须是分镜数组")
+        if path in {"platforms.xiaohongshu.tags"} and value is not None:
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                raise ValueError("platforms.xiaohongshu.tags 必须是字符串数组")
+
 
 def apply_patch(project: ContentProject, patch: ContentPatch) -> ContentProject:
+    validate_patch_paths(patch.patch)
     data = project.model_dump(mode="python")
     for path, value in patch.patch.items():
         _set_path(data, path, value)

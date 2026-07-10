@@ -163,3 +163,51 @@ def test_parse_patch_field_intent() -> None:
     parsed = parse_intent("只改标题，更吸引人", "wechat", has_draft=True)
     assert parsed.intent == "patch_field"
     assert parsed.patch_fields == ["title"]
+
+
+def test_restore_version_uses_snapshot_chat_history(client: TestClient) -> None:
+    create = client.post(
+        "/api/projects",
+        json={"inspiration": "版本恢复测试", "title": "版本恢复"},
+    )
+    assert create.status_code == 200
+    project_id = create.json()["id"]
+
+    first = client.post(
+        f"/api/projects/{project_id}/chat",
+        json={
+            "message": "",
+            "selected_platform": "wechat",
+            "stream": False,
+            "action": "generate_draft",
+        },
+    )
+    assert first.status_code == 200
+    after_first = first.json()["project"]
+    assert len(after_first["chat_history"]) == 2
+    first_humanized = after_first["humanized"]
+
+    second = client.post(
+        f"/api/projects/{project_id}/chat",
+        json={
+            "message": "更温和一点",
+            "selected_platform": "wechat",
+            "stream": False,
+        },
+    )
+    assert second.status_code == 200
+    after_second = second.json()["project"]
+    assert len(after_second["chat_history"]) == 4
+    assert after_second["humanized"] != first_humanized
+    version_id = after_second["versions"][1]["id"]
+
+    restored = client.post(f"/api/projects/{project_id}/versions/{version_id}/restore")
+    assert restored.status_code == 200
+    data = restored.json()
+    assert data["humanized"] == first_humanized
+    assert len(data["chat_history"]) == 4
+    assert data["chat_history"][-1]["content"].startswith("已恢复到版本：")
+    assert data["chat_history"][-2]["role"] == "user"
+    assert data["chat_history"][-2]["content"] == "更温和一点"
+
+    client.delete(f"/api/projects/{project_id}")

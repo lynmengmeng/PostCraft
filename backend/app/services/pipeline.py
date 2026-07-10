@@ -41,6 +41,7 @@ from app.services.xiaohongshu_styles import (
     polish_xiaohongshu_body,
     polish_xiaohongshu_title,
     refine_xhs_image_pages,
+    refine_xhs_page_copy,
     resolve_style_for_xhs,
     styles_reference_block,
     summarize_xhs_single_page_copy,
@@ -58,6 +59,34 @@ class ContentPipeline:
     def __init__(self, llm: LLMClient, skills: SkillLoader):
         self.llm = llm
         self.skills = skills
+
+    async def _parse_json_response(
+        self,
+        raw: str,
+        *,
+        fallback_key: str | None = None,
+        repair_hint: str = "",
+    ) -> dict[str, Any]:
+        try:
+            payload = parse_json_from_text(raw, fallback_key=fallback_key)
+            if fallback_key and not str(payload.get(fallback_key, "")).strip():
+                raise ValueError(f"empty {fallback_key}")
+            return payload
+        except ValueError:
+            if not self.llm.status().configured:
+                raise
+
+        repair_system = (
+            "你是 JSON 修复助手。将破损的模型输出修复为一个合法 JSON 对象。"
+            "只输出 JSON，不要 markdown 代码块或解释文字。"
+        )
+        repair_user = repair_hint.strip()
+        if fallback_key:
+            key_line = f'目标格式示例：{{"{fallback_key}":"完整内容"}}'
+            repair_user = f"{key_line}\n\n{repair_user}" if repair_user else key_line
+        repair_user = f"{repair_user}\n\n破损输出：\n{raw[:6000]}".strip()
+        repaired = await self.llm.complete(repair_system, repair_user, json_mode=True)
+        return parse_json_from_text(repaired, fallback_key=fallback_key)
 
     async def generate_draft(
         self,
@@ -272,7 +301,11 @@ class ContentPipeline:
             + self._constraints_block(constraints or [])
         )
         raw = await self.llm.complete(system, user, json_mode=True)
-        payload = parse_json_from_text(raw, fallback_key="humanized")
+        payload = await self._parse_json_response(
+            raw,
+            fallback_key="humanized",
+            repair_hint="根据用户指令修改观察型初稿 Markdown。",
+        )
         updated = payload.get("humanized", humanized)
         return {"humanized": updated, "draft": updated}
 
@@ -310,7 +343,11 @@ class ContentPipeline:
             + self._constraints_block(constraints or [])
         )
         raw = await self.llm.complete(system, user, json_mode=True)
-        payload = parse_json_from_text(raw, fallback_key="humanized")
+        payload = await self._parse_json_response(
+            raw,
+            fallback_key="humanized",
+            repair_hint="根据用户指令修改 humanized 中间体 Markdown。",
+        )
         updated_humanized = payload.get("humanized", humanized)
 
         patch: dict[str, Any] = {"humanized": updated_humanized, "draft": updated_humanized}

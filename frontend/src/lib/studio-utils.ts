@@ -23,6 +23,18 @@ export const quickCommands = [
   "撤销上一版",
 ];
 
+export function appendStreamingDelta(prev: string, delta: string): string {
+  return prev ? `${prev}\n${delta}` : delta;
+}
+
+export function hasLaterChatMessages(
+  chatHistory: ContentProject["chat_history"],
+  assistantMessageId: string,
+): boolean {
+  const idx = chatHistory.findIndex((item) => item.id === assistantMessageId);
+  return idx >= 0 && idx < chatHistory.length - 1;
+}
+
 export function hasDraft(project: ContentProject) {
   return !!(project.humanized || project.draft);
 }

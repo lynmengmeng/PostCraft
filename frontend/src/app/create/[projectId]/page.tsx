@@ -38,8 +38,10 @@ import {
 } from "@/lib/export";
 import {
   ALL_PLATFORMS,
+  appendStreamingDelta,
   getChatContextPlatform,
   hasDraft,
+  hasLaterChatMessages,
   hasPlatformContent,
   platformIcons,
   type MobileStudioPanel,
@@ -95,7 +97,6 @@ export default function CreateStudioPage() {
   const { config } = useAuth();
   const standaloneViewport = config?.auth_required === false;
   const autoStarted = useRef(false);
-  const chatEndRef = useRef<HTMLDivElement>(null);
   const chatAbortRef = useRef<AbortController | null>(null);
   const [project, setProject] = useState<ContentProject | null>(null);
   const [editorTab, setEditorTab] = useState<EditorTab>("draft");
@@ -181,10 +182,6 @@ export default function CreateStudioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.projectId]);
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [project?.chat_history, streamingText, sending, cascadePrompt, autoDraftPending]);
-
   async function sendChat(text: string, current = project, options?: ChatOptions): Promise<boolean> {
     if (!current || sending) return false;
     const attachmentUrls = options?.attachment_urls ?? pendingAttachments;
@@ -231,7 +228,7 @@ export default function CreateStudioPage() {
         chatPlatform,
         true,
         (delta) => {
-          setStreamingText((prev) => prev + delta);
+          setStreamingText((prev) => appendStreamingDelta(prev, delta));
         },
         {
           ...options,
@@ -276,6 +273,12 @@ export default function CreateStudioPage() {
 
   async function regenerateAssistantMessage(assistantMessageId: string) {
     if (!project || sending || regeneratingId) return;
+    if (
+      hasLaterChatMessages(project.chat_history, assistantMessageId) &&
+      !window.confirm("重新生成将删除此条回复之后的所有对话记录，是否继续？")
+    ) {
+      return;
+    }
     const signal = beginAbortableRequest();
     const chatPlatform = getChatContextPlatform(editorTab, project);
     setRegeneratingId(assistantMessageId);
@@ -289,7 +292,7 @@ export default function CreateStudioPage() {
         chatPlatform,
         true,
         (delta) => {
-          setStreamingText((prev) => prev + delta);
+          setStreamingText((prev) => appendStreamingDelta(prev, delta));
         },
         signal,
       );
@@ -338,7 +341,7 @@ export default function CreateStudioPage() {
         targets,
         true,
         (delta) => {
-          setStreamingText((prev) => prev + delta);
+          setStreamingText((prev) => appendStreamingDelta(prev, delta));
         },
         signal,
       );
@@ -618,7 +621,6 @@ export default function CreateStudioPage() {
           streamingText={streamingText}
           regeneratingId={regeneratingId}
           autoDraftPending={autoDraftPending}
-          chatEndRef={chatEndRef}
           onRegenerate={(id) => void regenerateAssistantMessage(id)}
         />
       </div>

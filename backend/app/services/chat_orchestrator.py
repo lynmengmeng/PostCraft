@@ -58,6 +58,73 @@ def _has_platform_content(project: ContentProject) -> bool:
     )
 
 
+def _platform_has_content(project: ContentProject, platform: str) -> bool:
+    if platform == "wechat":
+        return bool(project.platforms["wechat"].body)
+    if platform == "xiaohongshu":
+        return bool(project.platforms["xiaohongshu"].body)
+    if platform == "douyin":
+        return bool(project.platforms["douyin"].script)
+    return False
+
+
+def _scoped_platform_targets(
+    project: ContentProject,
+    selected_platform: str,
+    target_platforms: list[str] | None,
+) -> list[str]:
+    candidates: list[str] = []
+    if target_platforms:
+        candidates = [p for p in target_platforms if p in ALL_PLATFORMS]
+    elif selected_platform in ALL_PLATFORMS:
+        candidates = [selected_platform]
+    return [p for p in candidates if _platform_has_content(project, p)]
+
+
+def _message_targets_draft(message: str) -> bool:
+    text = message.strip()
+    return bool(re.search(r"初稿|观察型|人性化", text))
+
+
+def _apply_scope_to_intent(
+    parsed: ParsedIntent,
+    project: ContentProject,
+    selected_platform: str,
+    target_platforms: list[str] | None,
+    message: str = "",
+) -> ParsedIntent:
+    """已有平台内容且用户选了作用域时，将初稿润色路由为平台 patch。"""
+    scoped_targets = _scoped_platform_targets(project, selected_platform, target_platforms)
+
+    if parsed.intent == "refine_draft":
+        if not scoped_targets or _message_targets_draft(message):
+            return parsed
+        return ParsedIntent(
+            intent="patch_platform",
+            target_platforms=scoped_targets,
+            constraints=parsed.constraints,
+            title_count=parsed.title_count,
+            title_search_friendly=parsed.title_search_friendly,
+            patch_fields=parsed.patch_fields,
+            layout_preset=parsed.layout_preset,
+            xhs_page_count=parsed.xhs_page_count,
+        )
+
+    if parsed.intent == "humanize":
+        return ParsedIntent(
+            intent="humanize",
+            target_platforms=scoped_targets,
+            constraints=parsed.constraints,
+            title_count=parsed.title_count,
+            title_search_friendly=parsed.title_search_friendly,
+            patch_fields=parsed.patch_fields,
+            layout_preset=parsed.layout_preset,
+            xhs_page_count=parsed.xhs_page_count,
+        )
+
+    return parsed
+
+
 def _cover_style_hint(message: str) -> str:
     hints: list[str] = []
     if re.search(r"暖色", message):
@@ -157,6 +224,16 @@ class ChatOrchestrator:
         )
 
         if parsed.intent == "rollback":
+            if len(project.versions) < 2:
+                patch = ContentPatch(
+                    intent="rollback",
+                    target_platforms=[],
+                    summary="暂无可回退的版本，请至少完成一次修改后再试。",
+                    patch={},
+                )
+                assistant = ChatMessage(role="assistant", content=patch.summary)
+                project.chat_history.append(assistant)
+                return project, patch, assistant
             restored = self._rollback(project)
             patch = ContentPatch(
                 intent="rollback",
@@ -322,10 +399,14 @@ class ChatOrchestrator:
             return ParsedIntent("layout_images", ["wechat"], [])
         has_draft = bool(project.humanized or project.draft)
         parsed = parse_intent(message, selected_platform, has_draft=has_draft)  # type: ignore[arg-type]
-        parsed = self._coerce_draft_refine_intent(message, parsed, has_draft, action)
+        parsed = self._coerce_draft_refine_intent(
+            message, parsed, has_draft, action, target_platforms
+        )
         if attachment_urls and parsed.intent == "refine_draft":
             return ParsedIntent("layout_images", ["wechat"], [])
-        return parsed
+        return _apply_scope_to_intent(
+            parsed, project, selected_platform, target_platforms, message
+        )
 
     def _coerce_draft_refine_intent(
         self,
@@ -333,12 +414,14 @@ class ChatOrchestrator:
         parsed: ParsedIntent,
         has_draft: bool,
         action: str | None,
+        target_platforms: list[str] | None = None,
     ) -> ParsedIntent:
         """已有初稿时，避免「添加了这个检查」等日常用语误触 fact_check。"""
         if not has_draft or action:
             return parsed
 
         text = message.strip()
+        scoped = bool(target_platforms)
         if parsed.intent == "fact_check" and not is_explicit_fact_check_request(text):
             return ParsedIntent("refine_draft", [], parsed.constraints)
 
@@ -347,6 +430,8 @@ class ChatOrchestrator:
             "patch_platform",
             "cover_assets",
         }:
+            if parsed.intent == "patch_platform" and scoped:
+                return parsed
             return ParsedIntent("refine_draft", [], parsed.constraints)
 
         return parsed
@@ -807,10 +892,42 @@ class ChatOrchestrator:
                     on_delta=on_delta,
                     content_categories=content_categories,
                 )
+                targets = [
+                    p
+                    for p in parsed.target_platforms
+                    if p in ALL_PLATFORMS and _platform_has_content(project, p)
+                ]
+                summary = "已重新去 AI 化润色初稿。"
+                if targets:
+                    if on_delta:
+                        await on_delta("正在同步到目标平台…")
+                    working = apply_patch(
+                        project,
+                        ContentPatch(
+                            intent="humanize",
+                            target_platforms=targets,  # type: ignore[arg-type]
+                            summary="",
+                            patch=patch_data,
+                        ),
+                    )
+                    platform_patch = await self.pipeline.cascade_from_humanized(
+                        working,
+                        style_profile,
+                        list(targets),
+                        on_delta=on_delta,
+                        content_categories=content_categories,
+                    )
+                    patch_data = {**patch_data, **platform_patch}
+                    if "wechat" in targets and project.cover_assets:
+                        patch_data = self._finalize_wechat_in_patch(
+                            patch_data,
+                            [a.model_dump(mode="json") for a in project.cover_assets],
+                        )
+                    summary = f"已重新去 AI 化润色初稿，并同步到：{'、'.join(targets)}。"
                 return ContentPatch(
                     intent="humanize",
-                    target_platforms=[],
-                    summary="已重新去 AI 化润色初稿。",
+                    target_platforms=targets or [],
+                    summary=summary,
                     patch=patch_data,
                     changes=self._changes_from_patch(patch_data),
                 )

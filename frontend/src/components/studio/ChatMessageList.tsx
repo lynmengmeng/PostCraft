@@ -1,6 +1,6 @@
 "use client";
 
-import type { RefObject } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { resolveImageUrl } from "@/lib/export";
 import { renderChatMarkdown } from "@/lib/markdown";
@@ -22,7 +22,6 @@ interface ChatMessageListProps {
   streamingText: string;
   regeneratingId: string | null;
   autoDraftPending: boolean;
-  chatEndRef: RefObject<HTMLDivElement | null>;
   onRegenerate: (messageId: string) => void;
 }
 
@@ -32,13 +31,29 @@ export function ChatMessageList({
   streamingText,
   regeneratingId,
   autoDraftPending,
-  chatEndRef,
   onRegenerate,
 }: ChatMessageListProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const showTyping = sending && !streamingText && !autoDraftPending;
 
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  }, []);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      scrollToBottom();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [chatHistory.length, streamingText, sending, autoDraftPending, scrollToBottom]);
+
   return (
-    <div className="custom-scrollbar min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden p-4">
+    <div
+      ref={scrollRef}
+      className="custom-scrollbar min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden p-4"
+    >
       {autoDraftPending && (
         <div className="flex items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-on-surface">
           <Icon name="progress_activity" className="animate-spin text-[18px] text-primary" />
@@ -127,7 +142,6 @@ export function ChatMessageList({
         </div>
       )}
 
-      <div ref={chatEndRef} aria-hidden className="h-0 shrink-0" />
     </div>
   );
 }

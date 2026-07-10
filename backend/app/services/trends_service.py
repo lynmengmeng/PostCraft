@@ -52,6 +52,7 @@ _cache: dict[str, Any] = {
     "fetched_at": None,
     "tophub_html": None,
     "wechat_picks": [],
+    "douyin_picks": [],
 }
 _analyze_cache: dict[str, tuple[datetime, TrendAnalysis]] = {}
 # 按北京时间（UTC+8）自然日判定「当天缓存」

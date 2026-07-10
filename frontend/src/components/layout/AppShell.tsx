@@ -11,6 +11,7 @@ const navItems = [
   { href: "/workspace", label: "工作台", icon: "dashboard" },
   { href: "/inspirations", label: "灵感库", icon: "lightbulb" },
   { href: "/topics", label: "选题库", icon: "topic" },
+  { href: "/douyin", label: "抖音运营", icon: "movie_filter" },
   { href: "/tools", label: "热点工具", icon: "trending_up" },
   { href: "/drafts", label: "草稿箱", icon: "description" },
   { href: "/settings", label: "设置", icon: "settings" },
@@ -20,6 +21,7 @@ const searchPlaceholders: Record<string, string> = {
   "/workspace": "搜索工作台...",
   "/inspirations": "搜索灵感库...",
   "/topics": "搜索选题、支柱或基调...",
+  "/douyin": "搜索碎碎念、共鸣文案...",
   "/tools": "搜索热点话题...",
   "/drafts": "搜索草稿...",
   "/settings": "搜索设置...",
@@ -51,7 +53,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isSeoLanding = pathname === "/";
   const isCreatePage = pathname.startsWith("/create/");
   const isToolsPage = pathname === "/tools";
-  const isFixedHeightPage = isCreatePage || isToolsPage;
+  const isDouyinPage = pathname.startsWith("/douyin");
+  const isFixedHeightPage = isCreatePage || isToolsPage || isDouyinPage;
   // 仅在后端明确关闭鉴权时，创作页才可匿名访问；config 未加载时不放行
   const isPublicCreate = isCreatePage && config?.auth_required === false;
   const isPublicPage = isSeoLanding || isAuthPage || isPublicCreate;

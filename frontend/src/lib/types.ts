@@ -302,6 +302,119 @@ export interface WechatInspirationPick {
   score: number;
 }
 
+export interface DouyinPlatformScript {
+  opening: string;
+  scene: string;
+  reversal: string;
+  question: string;
+  duration: string;
+  visual_style: string;
+}
+
+export interface XiaohongshuAdaptation {
+  title: string;
+  opening: string;
+  methods: string[];
+  closing_question: string;
+  tags: string[];
+}
+
+export interface DouyinInspirationPick {
+  trend_id: string;
+  title: string;
+  source: TrendSource;
+  source_label: string;
+  heat: number;
+  url: string;
+  pillar: string;
+  expression_type: string;
+  series_name: string;
+  series_episode: number | null;
+  hook: string;
+  copy_text: string;
+  script_outline: string[];
+  douyin: DouyinPlatformScript;
+  xiaohongshu: XiaohongshuAdaptation;
+  cover_prompt: string;
+  cover_url: string;
+  tags: string[];
+  score: number;
+}
+
+export interface AccountPositioning {
+  tagline: string;
+  target_audience: string;
+  keywords: string[];
+  bio: string;
+  name_suggestions: string[];
+}
+
+export interface WeeklyScheduleItem {
+  weekday: string;
+  pillar: string;
+  topic: string;
+  expression_type: string;
+}
+
+export interface ContentRatioGuide {
+  emotion_work: string;
+  solitude_life: string;
+  family_relation: string;
+  note: string;
+}
+
+export interface SeriesGuide {
+  name: string;
+  episodes: string[];
+  series_id: string;
+}
+
+export interface SeriesEpisodeDetail {
+  episode: number;
+  title: string;
+  pillar: string;
+  expression_type: string;
+  cover_url: string;
+  cover_prompt: string;
+  status: string;
+  linked_pick_id: string;
+  hook: string;
+  notes: string;
+}
+
+export interface SeriesPhaseGuide {
+  name: string;
+  start_episode: number;
+  end_episode: number;
+  note: string;
+}
+
+export interface SeriesStudio {
+  series_id: string;
+  series_name: string;
+  tagline: string;
+  description: string;
+  total_episodes: number;
+  phases: SeriesPhaseGuide[];
+  series_cover_url: string;
+  series_cover_prompt: string;
+  intro_copy: string;
+  xhs_tags: string[];
+  episodes: SeriesEpisodeDetail[];
+}
+
+export interface DouyinOpsBoard {
+  picks: DouyinInspirationPick[];
+  positioning: AccountPositioning;
+  weekly_schedule: WeeklyScheduleItem[];
+  content_ratio: ContentRatioGuide;
+  series: SeriesGuide;
+  fetched_at: string | null;
+  sources: string[];
+  cache_hit: boolean;
+  saved_pick_ids: string[];
+}
+
 export interface TrendsBoard {
   items: TrendItem[];
   fetched_at: string | null;

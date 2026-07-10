@@ -517,6 +517,164 @@ class WechatInspirationPick(BaseModel):
     score: float = 0
 
 
+class DouyinPlatformScript(BaseModel):
+    opening: str = ""
+    scene: str = ""
+    reversal: str = ""
+    question: str = ""
+    duration: str = "30-60秒"
+    visual_style: str = "生活画面+配音"
+
+
+class XiaohongshuAdaptation(BaseModel):
+    title: str = ""
+    opening: str = ""
+    methods: list[str] = Field(default_factory=list)
+    closing_question: str = ""
+    tags: list[str] = Field(default_factory=list)
+
+
+class DouyinInspirationPick(BaseModel):
+    trend_id: str
+    title: str
+    source: TrendSource = "fallback"
+    source_label: str = ""
+    heat: float = 0
+    url: str = ""
+    pillar: str = ""
+    expression_type: str = "共鸣型"
+    series_name: str = ""
+    series_episode: int | None = None
+    hook: str = ""
+    copy_text: str = ""
+    script_outline: list[str] = Field(default_factory=list)
+    douyin: DouyinPlatformScript = Field(default_factory=DouyinPlatformScript)
+    xiaohongshu: XiaohongshuAdaptation = Field(default_factory=XiaohongshuAdaptation)
+    cover_prompt: str = ""
+    cover_url: str = ""
+    tags: list[str] = Field(default_factory=list)
+    score: float = 0
+
+
+class AccountPositioning(BaseModel):
+    tagline: str = "记录普通女生如何降低内耗，重新建立自己的生活。"
+    target_audience: str = "25—40 岁，正在经历工作压力、朋友减少、家庭催促、情绪内耗的女性。"
+    keywords: list[str] = Field(
+        default_factory=lambda: [
+            "低耗生活",
+            "独处",
+            "女性成长",
+            "情绪管理",
+            "职场内耗",
+            "人际边界",
+        ]
+    )
+    bio: str = "不教你成功，只陪你少一点内耗。分享独处、职场、人际关系和普通女生的生活感悟。"
+    name_suggestions: list[str] = Field(
+        default_factory=lambda: [
+            "低耗生活研究所",
+            "普通人的松弛感",
+            "不内耗生活指南",
+            "清醒生活观察",
+            "今天也不为难自己",
+            "一个普通女生的自救记录",
+        ]
+    )
+
+
+class WeeklyScheduleItem(BaseModel):
+    weekday: str
+    pillar: str
+    topic: str
+    expression_type: str = "共鸣型"
+
+
+class ContentRatioGuide(BaseModel):
+    emotion_work: str = "50%"
+    solitude_life: str = "30%"
+    family_relation: str = "20%"
+    note: str = "新账号前 30 条按此比例，每周发 5 条即可。"
+
+
+class SeriesGuide(BaseModel):
+    name: str = "普通女生停止内耗的30天"
+    episodes: list[str] = Field(default_factory=list)
+    series_id: str = "stop-internal-friction"
+
+
+class SeriesEpisodeDetail(BaseModel):
+    episode: int
+    title: str
+    pillar: str = ""
+    expression_type: str = "故事型"
+    cover_url: str = ""
+    cover_prompt: str = ""
+    status: str = "pending"
+    linked_pick_id: str = ""
+    hook: str = ""
+    notes: str = ""
+
+
+class SeriesPhaseGuide(BaseModel):
+    name: str
+    start_episode: int
+    end_episode: int
+    note: str = ""
+
+
+class SeriesStudioResponse(BaseModel):
+    series_id: str
+    series_name: str
+    tagline: str = "记录普通女生如何降低内耗，重新建立自己的生活。"
+    description: str = ""
+    total_episodes: int = 30
+    phases: list[SeriesPhaseGuide] = Field(default_factory=list)
+    series_cover_url: str = ""
+    series_cover_prompt: str = ""
+    intro_copy: str = ""
+    xhs_tags: list[str] = Field(default_factory=list)
+    episodes: list[SeriesEpisodeDetail] = Field(default_factory=list)
+
+
+class SeriesStudioUpdateRequest(BaseModel):
+    intro_copy: str = ""
+    notes: str = ""
+    episode: int | None = None
+
+
+class SeriesExtendRequest(BaseModel):
+    count: int = 5
+
+
+class SeriesCoverGenerateRequest(BaseModel):
+    cover_prompt: str = ""
+    episode: int | None = None
+    title: str = ""
+
+
+class DouyinOpsBoardResponse(BaseModel):
+    picks: list[DouyinInspirationPick] = Field(default_factory=list)
+    positioning: AccountPositioning = Field(default_factory=AccountPositioning)
+    weekly_schedule: list[WeeklyScheduleItem] = Field(default_factory=list)
+    content_ratio: ContentRatioGuide = Field(default_factory=ContentRatioGuide)
+    series: SeriesGuide = Field(default_factory=SeriesGuide)
+    fetched_at: datetime | None = None
+    sources: list[str] = Field(default_factory=list)
+    cache_hit: bool = False
+    saved_pick_ids: list[str] = Field(default_factory=list)
+
+
+class DouyinCoverGenerateRequest(BaseModel):
+    hook: str
+    cover_prompt: str = ""
+    pick_id: str = ""
+
+
+class DouyinCoverGenerateResponse(BaseModel):
+    cover_url: str
+    placeholder: bool = False
+
+
 class TrendsBoardResponse(BaseModel):
     items: list[TrendItem] = Field(default_factory=list)
     fetched_at: datetime | None = None

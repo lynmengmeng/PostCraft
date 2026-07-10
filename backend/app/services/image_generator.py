@@ -16,8 +16,10 @@ logger = logging.getLogger(__name__)
 GPT_IMAGE_2_XHS_COVER_SIZE = "768x1024"
 # 公众号头条封面 2.35:1（1280÷544≈2.35，均为 16 的倍数）
 GPT_IMAGE_2_WECHAT_COVER_SIZE = "1280x544"
+# 抖音竖版封面 9:16
+GPT_IMAGE_2_DOUYIN_COVER_SIZE = "1024x1792"
 
-CoverAspect = str  # "wechat" | "xhs"
+CoverAspect = str  # "wechat" | "xhs" | "douyin"
 
 
 class ImageGenerator:
@@ -80,7 +82,11 @@ class ImageGenerator:
         prompt: str,
         aspect: CoverAspect,
     ) -> str:
-        size = GPT_IMAGE_2_WECHAT_COVER_SIZE if aspect == "wechat" else GPT_IMAGE_2_XHS_COVER_SIZE
+        size = GPT_IMAGE_2_WECHAT_COVER_SIZE
+        if aspect == "xhs":
+            size = GPT_IMAGE_2_XHS_COVER_SIZE
+        elif aspect == "douyin":
+            size = GPT_IMAGE_2_DOUYIN_COVER_SIZE
         response = await client.images.generate(
             model=self.image_model,
             prompt=prompt[:900],
@@ -106,6 +112,8 @@ class ImageGenerator:
             return f"/api/images/{name}"
         if aspect == "wechat":
             width, height = 1280, 544
+        elif aspect == "douyin":
+            width, height = 1024, 1792
         else:
             width, height = 768, 1024
         safe_caption = caption.replace("&", "&amp;").replace("<", "&lt;")[:24]
@@ -124,6 +132,8 @@ class ImageGenerator:
         path = self.output_dir / filename
         if aspect == "wechat":
             width, height = 1280, 544
+        elif aspect == "douyin":
+            width, height = 1024, 1792
         else:
             width, height = 600, 800
         svg = f"""<?xml version="1.0" encoding="UTF-8"?>

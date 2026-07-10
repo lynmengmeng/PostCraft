@@ -22,6 +22,46 @@ def test_get_trends(client: TestClient) -> None:
     assert "saved_trend_ids" in data
 
 
+def test_get_douyin_ops(client: TestClient) -> None:
+    response = client.get("/api/tools/douyin-ops")
+    assert response.status_code == 200
+    data = response.json()
+    assert "picks" in data
+    assert "saved_pick_ids" in data
+    assert isinstance(data["picks"], list)
+
+
+def test_get_series_studio(client: TestClient) -> None:
+    response = client.get("/api/tools/douyin-ops/series")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["series_name"]
+    assert len(data["episodes"]) == 30
+    assert data["episodes"][0]["episode"] == 1
+
+
+def test_generate_episode_script(client: TestClient) -> None:
+    response = client.post("/api/tools/douyin-ops/series/episodes/1/generate-script")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["hook"]
+    assert data["status"] == "scripted"
+
+
+def test_douyin_pick_to_project(client: TestClient) -> None:
+    response = client.post(
+        "/api/tools/douyin-ops/to-project",
+        json={
+            "title": "你有没有发现，越来越多年轻人开始反向消费？",
+            "inspiration": "抖音运营推荐",
+            "cover_headline": "反向消费背后",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["platforms"]["douyin"]["hook"] == "反向消费背后"
+
+
 def test_trend_to_project_prefills_cover(client: TestClient) -> None:
     response = client.post(
         "/api/tools/trends/to-project",

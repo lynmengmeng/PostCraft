@@ -3,7 +3,37 @@ import type {
   TrendInspirationSnapshot,
   TrendItem,
   WechatInspirationPick,
+  DouyinInspirationPick,
 } from "@/lib/types";
+
+export function analysisFromDouyinPick(pick: DouyinInspirationPick): TrendAnalysis {
+  return {
+    why_hot: `栏目：${pick.pillar}，表达类型：${pick.expression_type}。`,
+    account_angle: pick.douyin.opening || pick.hook,
+    topic_ideas: [pick.xiaohongshu.title || pick.title],
+    platform_tips: {
+      wechat: "",
+      xiaohongshu: pick.xiaohongshu.methods.join("；") || pick.xiaohongshu.opening,
+      douyin: pick.copy_text.slice(0, 200),
+    },
+    caution: "",
+    related: [],
+  };
+}
+
+export function snapshotFromDouyinPick(
+  pick: DouyinInspirationPick,
+  analysis: TrendAnalysis,
+): TrendInspirationSnapshot {
+  return {
+    trend_id: pick.trend_id,
+    title: pick.title,
+    source_label: pick.pillar || pick.source_label,
+    summary: pick.douyin.opening || pick.hook,
+    url: pick.url,
+    analysis,
+  };
+}
 
 export function analysisFromPick(pick: WechatInspirationPick): TrendAnalysis {
   return {

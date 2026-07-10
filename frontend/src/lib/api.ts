@@ -19,6 +19,9 @@ import type {
   TrendItem,
   TrendRelatedItem,
   TrendsBoard,
+  DouyinOpsBoard,
+  SeriesStudio,
+  SeriesEpisodeDetail,
 } from "./types";
 import { ApiError, formatApiError, isNetworkFetchError } from "./api-error";
 import { authHeaders, clearAuth } from "./auth";
@@ -584,6 +587,70 @@ export const api = {
     cover_subheadline?: string;
   }) =>
     request<ContentProject>("/tools/trends/to-project", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  getDouyinOps: (refresh = false) =>
+    request<DouyinOpsBoard>(`/tools/douyin-ops${refresh ? "?refresh=true" : ""}`),
+  refreshDouyinOps: () =>
+    request<DouyinOpsBoard>("/tools/douyin-ops/refresh", { method: "POST" }),
+  generateDouyinCover: (payload: {
+    hook: string;
+    cover_prompt?: string;
+    pick_id?: string;
+  }) =>
+    request<{ cover_url: string; placeholder: boolean }>("/tools/douyin-ops/generate-cover", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getSeriesStudio: () => request<SeriesStudio>("/tools/douyin-ops/series"),
+  updateSeriesStudio: (payload: { intro_copy?: string; episode?: number; notes?: string }) =>
+    request<SeriesStudio>("/tools/douyin-ops/series", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  generateSeriesCover: (payload: {
+    cover_prompt?: string;
+    episode?: number;
+    title?: string;
+  }) =>
+    request<{ cover_url: string; placeholder: boolean }>(
+      "/tools/douyin-ops/series/generate-cover",
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  generateEpisodeScript: (episode: number) =>
+    request<SeriesEpisodeDetail>(
+      `/tools/douyin-ops/series/episodes/${episode}/generate-script`,
+      { method: "POST" },
+    ),
+  extendSeries: (count = 5) =>
+    request<SeriesStudio>("/tools/douyin-ops/series/extend", {
+      method: "POST",
+      body: JSON.stringify({ count }),
+    }),
+  douyinPickToTopic: (payload: {
+    title: string;
+    inspiration?: string;
+    content_pillar?: string;
+    tone?: string;
+    source_url?: string;
+    trend_id?: string;
+    trend_snapshot?: TrendInspirationSnapshot;
+  }) =>
+    request<Topic>("/tools/douyin-ops/to-topic", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  douyinPickToProject: (payload: {
+    title: string;
+    inspiration?: string;
+    content_pillar?: string;
+    source_url?: string;
+    trend_id?: string;
+    cover_headline?: string;
+  }) =>
+    request<ContentProject>("/tools/douyin-ops/to-project", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ContentProject, DouyinScene, Platform } from "@/lib/types";
 import { platformLabels } from "@/lib/api";
 import { resolveImageUrl } from "@/lib/export";
+import { wechatCoverAssets } from "@/lib/cover-assets";
+import { hasRealImage } from "@/lib/wechat-assets";
+import { isWechatCoverAsset } from "@/lib/wechat-cover";
 import { renderXhsBody } from "@/lib/markdown";
 import {
   getWechatPlainText,
@@ -38,6 +41,11 @@ export function WechatPreview({
   const theme = normalizeStyleTheme(content.style_theme);
   const accent = theme.accent;
   const preset = theme.layout_preset || "classic";
+  const placements = content.image_placements ?? [];
+  const wechatAssets = wechatCoverAssets(coverAssets);
+  const coverAsset = wechatAssets.find((asset, index) =>
+    isWechatCoverAsset(asset, index, placements) && hasRealImage(asset),
+  );
   const summaryStyle =
     preset === "classic"
       ? { borderLeftColor: "#fbbf24", background: "#fffbeb" }
@@ -63,6 +71,20 @@ export function WechatPreview({
         <h1 className="text-[22px] font-bold leading-snug tracking-tight text-stone-900">
           {content.title || "标题待生成"}
         </h1>
+        {coverAsset?.image_url && (
+          <div className="mt-4 overflow-hidden rounded-xl">
+            <img
+              src={resolveImageUrl(coverAsset.image_url)}
+              alt={coverAsset.caption || coverAsset.headline || "公众号封面"}
+              className="aspect-[2.35/1] w-full object-cover"
+            />
+            {(coverAsset.caption || coverAsset.subheadline) && (
+              <p className="mt-2 text-center text-xs text-stone-400">
+                {coverAsset.caption || coverAsset.subheadline}
+              </p>
+            )}
+          </div>
+        )}
         {content.summary && (
           <p
             className="mt-4 rounded-lg border-l-4 px-4 py-3 text-sm leading-relaxed text-stone-600"

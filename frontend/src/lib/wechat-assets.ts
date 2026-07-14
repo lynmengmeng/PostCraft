@@ -37,6 +37,34 @@ export function insertPlaceholderInBody(body: string, assetIndex: number, captio
   return trimmed ? `${trimmed}\n\n${block}\n` : `${block}\n`;
 }
 
+export function syncCoverAssetsCaptionsFromBody(
+  body: string,
+  coverAssets: CoverAsset[],
+): CoverAsset[] {
+  const refs: { assetIndex: number; caption: string }[] = [];
+  let match: RegExpExecArray | null;
+  const re = new RegExp(IMAGE_MD_RE.source, "g");
+  while ((match = re.exec(body)) !== null) {
+    const alt = match[1];
+    const src = match[2].trim();
+    const placeholder = src.match(/^__IMAGE_(\d+)__$/);
+    if (!placeholder) continue;
+    refs.push({ assetIndex: Number(placeholder[1]), caption: alt });
+  }
+  if (refs.length === 0) return coverAssets;
+
+  return coverAssets.map((asset) => {
+    const assetIndex = asset.asset_index ?? -1;
+    const ref = refs.find((r) => r.assetIndex === assetIndex);
+    if (!ref?.caption) return asset;
+    return {
+      ...asset,
+      caption: ref.caption,
+      subheadline: asset.subheadline === "正文配图" || !asset.subheadline ? ref.caption : asset.subheadline,
+    };
+  });
+}
+
 export function syncImagePlacementsFromBody(
   body: string,
   coverAssets: CoverAsset[],

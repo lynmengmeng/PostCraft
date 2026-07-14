@@ -54,6 +54,7 @@ from app.models.schemas import (
 from app.services.wechat_assets import (
     insert_placeholder_in_body,
     next_asset_index,
+    sync_body_image_alts_from_assets,
     sync_image_placements,
 )
 from app.services.wechat_html import finalize_wechat_content

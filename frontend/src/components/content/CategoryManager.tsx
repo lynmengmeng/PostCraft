@@ -257,7 +257,7 @@ export function CategoryManager({
                   className="w-full rounded-lg border border-outline-variant/30 px-3 py-2 text-sm outline-none focus:border-primary"
                 />
                 <p className="mt-1 text-[11px] text-on-surface-variant/70">
-                  新号冷启动建议优先「搜索关键词 + 人群 + 结果」型标题
+                  高打开率：社交币 + 悬念 + 利益点；可优先「数字+结果+悬念」模板
                 </p>
               </div>
               <input

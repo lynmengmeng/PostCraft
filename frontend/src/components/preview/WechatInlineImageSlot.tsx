@@ -22,7 +22,8 @@ export function WechatInlineImageSlot({
   onUpdate,
 }: WechatInlineImageSlotProps) {
   const asset = getCoverAssetByIndex(coverAssets, assetIndex);
-  const label = caption || asset?.caption || asset?.subheadline || `配图${assetIndex + 1}`;
+  const label =
+    asset?.caption || asset?.subheadline || caption || `配图${assetIndex + 1}`;
   const { fileInputRef, uploading, generating, error, handleUpload, handleGenerate, openFilePicker } =
     useCoverAssetActions(projectId, asset, assetIndex, onUpdate, label);
   const busy = uploading || generating;

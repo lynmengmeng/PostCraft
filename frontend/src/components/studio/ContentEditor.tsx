@@ -7,6 +7,7 @@ import {
   createEmptyAssetSlot,
   insertPlaceholderInBody,
   nextAssetIndex,
+  syncCoverAssetsCaptionsFromBody,
   syncImagePlacementsFromBody,
 } from "@/lib/wechat-assets";
 import { LAYOUT_PRESET_LABELS, normalizeStyleTheme } from "@/lib/wechat-html";
@@ -130,6 +131,7 @@ export function ContentEditor({ project, editorTab, onUpdate, onSaveError }: Con
     const next = structuredClone(project);
     next.platforms.wechat[field] = value;
     if (field === "body") {
+      next.cover_assets = syncCoverAssetsCaptionsFromBody(value, next.cover_assets);
       next.platforms.wechat.image_placements = syncImagePlacementsFromBody(
         value,
         next.cover_assets,

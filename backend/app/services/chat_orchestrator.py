@@ -42,7 +42,7 @@ from app.services.mock_generator import (
 from app.services.pipeline import ContentPipeline
 from app.services.repository import apply_patch
 from app.services.skill_loader import SkillLoader
-from app.services.wechat_assets import next_asset_index
+from app.services.wechat_assets import next_asset_index, sync_body_image_alts_from_assets
 from app.services.xiaohongshu_assets import generate_xiaohongshu_carousel, sync_xhs_carousel_plan
 from app.services.wechat_html import finalize_wechat_content
 from app.skill_pipelines import ALL_PLATFORMS
@@ -1140,7 +1140,16 @@ class ChatOrchestrator:
         merged.extend(new_assets)
 
         result = self._assign_placeholder_images({**patch_data, "cover_assets": merged})
-        return self._finalize_wechat_in_patch(result)
+        result = self._finalize_wechat_in_patch(result)
+
+        wechat = result.get("platforms.wechat")
+        if isinstance(wechat, dict) and merged:
+            assets = result.get("cover_assets") or merged
+            body = wechat.get("body", "")
+            if body and "__IMAGE_" in body:
+                wechat = {**wechat, "body": sync_body_image_alts_from_assets(body, assets)}
+                result["platforms.wechat"] = finalize_wechat_content(wechat, assets)
+        return result
 
     def _assign_placeholder_images(self, patch_data: dict[str, Any]) -> dict[str, Any]:
         assets = patch_data.get("cover_assets") or []

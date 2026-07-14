@@ -58,6 +58,72 @@ def extract_body_image_refs(body: str) -> list[dict[str, Any]]:
     return refs
 
 
+def get_cover_asset_by_index(
+    cover_assets: list[CoverAsset | dict[str, Any]],
+    asset_index: int,
+) -> CoverAsset | dict[str, Any] | None:
+    for index, asset in enumerate(cover_assets):
+        idx = int(asset.get("asset_index", index)) if isinstance(asset, dict) else (
+            asset.asset_index if asset.asset_index >= 0 else index
+        )
+        if idx == asset_index:
+            return asset
+    if 0 <= asset_index < len(cover_assets):
+        return cover_assets[asset_index]
+    return None
+
+
+def sync_body_image_alts_from_assets(
+    body: str,
+    cover_assets: list[CoverAsset | dict[str, Any]],
+) -> str:
+    """将正文配图占位符的图注与 cover_assets 中的 caption 对齐。"""
+
+    def replace_alt(match: re.Match[str]) -> str:
+        alt = match.group(1)
+        src = match.group(2).strip()
+        placeholder = PLACEHOLDER_SRC_RE.match(src)
+        if not placeholder:
+            return match.group(0)
+        asset_index = int(placeholder.group(1))
+        asset = get_cover_asset_by_index(cover_assets, asset_index)
+        if not asset:
+            return match.group(0)
+        if isinstance(asset, dict):
+            caption = asset.get("caption") or asset.get("subheadline") or alt
+        else:
+            caption = asset.caption or asset.subheadline or alt
+        return f"![{caption}](__IMAGE_{asset_index}__)"
+
+    return IMAGE_MD_RE.sub(replace_alt, body)
+
+
+def sync_cover_assets_captions_from_body(
+    body: str,
+    cover_assets: list[CoverAsset | dict[str, Any]],
+) -> list[CoverAsset | dict[str, Any]]:
+    """根据正文中的图注更新 cover_assets 的 caption / subheadline。"""
+    refs = extract_body_image_refs(body)
+    if not refs:
+        return cover_assets
+
+    updated = [dict(asset) if isinstance(asset, dict) else asset.model_dump(mode="json") for asset in cover_assets]
+    by_index = {
+        int(item.get("asset_index", index)): item
+        for index, item in enumerate(updated)
+    }
+    for ref in refs:
+        asset_index = int(ref["asset_index"])
+        caption = str(ref.get("caption") or ref.get("alt") or "").strip()
+        if not caption or asset_index not in by_index:
+            continue
+        item = by_index[asset_index]
+        item["caption"] = caption
+        if not item.get("subheadline") or item.get("subheadline") == "正文配图":
+            item["subheadline"] = caption
+    return updated
+
+
 def sync_image_placements(
     body: str,
     cover_assets: list[CoverAsset | dict[str, Any]],
@@ -69,9 +135,9 @@ def sync_image_placements(
     placements: list[dict[str, Any]] = []
     for ref in refs:
         asset_index = int(ref["asset_index"])
+        asset = get_cover_asset_by_index(cover_assets, asset_index)
         prompt = ""
-        if asset_index < len(cover_assets):
-            asset = cover_assets[asset_index]
+        if asset:
             prompt = asset.get("prompt", "") if isinstance(asset, dict) else asset.prompt
         placements.append(
             WechatImagePlacement(

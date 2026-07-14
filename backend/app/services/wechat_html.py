@@ -264,13 +264,54 @@ def _styles(theme: dict[str, str]) -> dict[str, str]:
     return _classic_styles(theme)
 
 
-def replace_image_placeholders(body: str, cover_assets: list[CoverAsset | dict[str, Any]]) -> str:
+def _asset_index_value(asset: CoverAsset | dict[str, Any], fallback: int) -> int:
+    if isinstance(asset, dict):
+        return int(asset.get("asset_index", fallback))
+    return int(asset.asset_index if asset.asset_index >= 0 else fallback)
+
+
+def _get_cover_asset_by_index(
+    cover_assets: list[CoverAsset | dict[str, Any]],
+    asset_index: int,
+) -> CoverAsset | dict[str, Any] | None:
+    for index, asset in enumerate(cover_assets):
+        if _asset_index_value(asset, index) == asset_index:
+            return asset
+    if 0 <= asset_index < len(cover_assets):
+        return cover_assets[asset_index]
+    return None
+
+
+def restore_body_image_placeholders(
+    body: str,
+    cover_assets: list[CoverAsset | dict[str, Any]],
+) -> str:
+    """将正文中已固化的配图 URL 还原为 __IMAGE_N__ 占位符，便于编辑与预览同步。"""
     result = body
     for index, asset in enumerate(cover_assets):
+        asset_index = _asset_index_value(asset, index)
         url = asset.get("image_url", "") if isinstance(asset, dict) else asset.image_url
         if not url:
             continue
-        result = result.replace(f"__IMAGE_{index}__", url)
+        marker = f"__IMAGE_{asset_index}__"
+        result = re.sub(
+            rf"!\[([^\]]*)\]\({re.escape(url)}\)",
+            rf"![\1]({marker})",
+            result,
+        )
+    return result
+
+
+def replace_image_placeholders(body: str, cover_assets: list[CoverAsset | dict[str, Any]]) -> str:
+    """仅将已生成/上传的配图 URL 写入正文（导出场景）；占位素材保留 __IMAGE_N__。"""
+    result = body
+    for index, asset in enumerate(cover_assets):
+        asset_index = _asset_index_value(asset, index)
+        url = asset.get("image_url", "") if isinstance(asset, dict) else asset.image_url
+        source = asset.get("source", "") if isinstance(asset, dict) else getattr(asset, "source", "")
+        if not url or source == "placeholder":
+            continue
+        result = result.replace(f"__IMAGE_{asset_index}__", url)
     return result
 
 
@@ -331,8 +372,8 @@ def render_wechat_body_inline_html(
         match = IMAGE_PLACEHOLDER_RE.match(src)
         if match:
             index = int(match.group(1))
-            if index < len(assets):
-                asset = assets[index]
+            asset = _get_cover_asset_by_index(assets, index)
+            if asset:
                 url = asset.get("image_url", "") if isinstance(asset, dict) else asset.image_url
                 source = asset.get("source", "") if isinstance(asset, dict) else getattr(asset, "source", "")
                 caption = (
@@ -465,7 +506,7 @@ def finalize_wechat_content(
     cover_assets: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     assets = cover_assets or []
-    body = replace_image_placeholders(wechat_data.get("body", ""), assets)
+    body = restore_body_image_placeholders(wechat_data.get("body", ""), assets)
     wechat_data = {**wechat_data, "body": body}
     wechat_data.pop("formatted_html", None)
     wechat_data["formatted_html"] = build_formatted_html(wechat_data, assets, force_rerender=True)

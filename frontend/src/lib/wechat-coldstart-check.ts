@@ -66,12 +66,18 @@ export function validateWechatColdstart(
     if (label === "待优化" || score < 3) {
       checks.push({
         level: "warn",
-        message: `标题搜一搜友好度偏低（${label}），建议加入人群 + 问句 + 明确结果`,
+        message:
+          "标题打开率要素不足，建议套用「数字+结果+悬念」，并加入人群、问句与可执行利益点",
       });
     } else if (label === "情绪向") {
       checks.push({
         level: "warn",
-        message: "标题偏情绪故事型，新号冷启动建议改用搜索问题型标题",
+        message: "标题偏纯情绪故事型，建议补上利益点或悬念，或改用搜索问题型",
+      });
+    } else if (label === "搜索友好") {
+      checks.push({
+        level: "info",
+        message: "标题搜索友好度不错，若再加强悬念或社交币（纠误区/反常识），打开率可能更高",
       });
     }
   }

@@ -106,17 +106,18 @@ class ImageGenerator:
 
     def slot_placeholder(self, aspect: CoverAspect = "wechat", *, caption: str = "待配图") -> str:
         """Default slot image shown before user uploads or AI-generates."""
-        name = "slot-placeholder-wechat.svg" if aspect == "wechat" else "slot-placeholder-inline.svg"
-        path = self.output_dir / name
-        if path.exists():
-            return f"/api/images/{name}"
         if aspect == "wechat":
             width, height = 1280, 544
+            prefix = "slot-ph-wechat"
         elif aspect == "douyin":
             width, height = 1024, 1792
+            prefix = "slot-ph-douyin"
         else:
             width, height = 768, 1024
+            prefix = "slot-ph-inline"
         safe_caption = caption.replace("&", "&amp;").replace("<", "&lt;")[:24]
+        name = f"{prefix}-{uuid4().hex}.svg"
+        path = self.output_dir / name
         svg = f"""<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
   <rect width="{width}" height="{height}" fill="#fafaf9"/>

@@ -462,11 +462,12 @@ export function buildFormattedHtml(
 
 export function replaceImagePlaceholders(body: string, coverAssets: CoverAsset[]): string {
   let result = body;
-  coverAssets.forEach((asset, index) => {
-    if (!asset.image_url) return;
+  for (const asset of coverAssets) {
+    if (!asset.image_url || asset.source === "placeholder") continue;
+    const index = asset.asset_index ?? coverAssets.indexOf(asset);
     const placeholder = `__IMAGE_${index}__`;
     result = result.split(placeholder).join(asset.image_url);
-  });
+  }
   return result;
 }
 

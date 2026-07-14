@@ -790,7 +790,7 @@ export default function CreateStudioPage() {
               </div>
             </div>
             <p className="mt-2 text-xs text-on-surface-variant/70">
-              点击标题应用到当前平台；标签「搜索友好」更适合新号冷启动；点右侧复制图标可单独复制。
+              点击标题应用到当前平台；「高打开潜力」兼顾社交币、悬念、利益点；「搜索友好」适合冷启动；过长或哗众取宠会标为待优化。
             </p>
             {project.titles.length === 0 ? (
               <p className="mt-3 text-sm leading-relaxed text-on-surface-variant">
@@ -801,7 +801,9 @@ export default function CreateStudioPage() {
                 {sortedTitleEntries.map(({ title, index }) => {
                   const { label } = scoreWechatTitle(title.text);
                   const labelClass =
-                    label === "搜索友好"
+                    label === "高打开潜力"
+                      ? "bg-emerald-100 text-emerald-900"
+                      : label === "搜索友好"
                       ? "bg-primary/15 text-primary"
                       : label === "情绪向"
                         ? "bg-amber-100 text-amber-900"

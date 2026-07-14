@@ -10,8 +10,9 @@ def test_slot_placeholder_urls() -> None:
     gen = ImageGenerator(get_settings())
     wechat_url = gen.slot_placeholder("wechat", caption="封面")
     inline_url = gen.slot_placeholder("xhs", caption="配图")
-    assert wechat_url.endswith("slot-placeholder-wechat.svg")
-    assert inline_url.endswith("slot-placeholder-inline.svg")
+    assert wechat_url.startswith("/api/images/slot-ph-wechat-")
+    assert inline_url.startswith("/api/images/slot-ph-inline-")
+    assert wechat_url != inline_url
 
 
 def test_render_skips_placeholder_assets_in_copy_html() -> None:
@@ -19,7 +20,7 @@ def test_render_skips_placeholder_assets_in_copy_html() -> None:
     assets = [
         CoverAsset(
             asset_index=0,
-            image_url="/api/images/slot-placeholder-inline.svg",
+            image_url="/api/images/slot-ph-inline-abc.svg",
             source="placeholder",
             caption="图注",
         ).model_dump(mode="json")

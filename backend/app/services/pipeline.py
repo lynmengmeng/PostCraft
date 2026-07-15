@@ -1030,9 +1030,9 @@ class ContentPipeline:
         default_prompt = self._default_image_prompt(cover_mood)
 
         if placements:
-            for placement in placements:
+            for idx, placement in enumerate(placements):
                 if isinstance(placement, dict):
-                    p = WechatImagePlacement.model_validate(placement)
+                    p = WechatImagePlacement.model_validate({**placement, "asset_index": idx})
                 else:
                     p = placement
                 prompt = p.prompt or default_prompt
@@ -1043,7 +1043,7 @@ class ContentPipeline:
                     prompt=prompt,
                     after_paragraph=p.after_paragraph,
                     caption=p.caption,
-                    asset_index=p.asset_index,
+                    asset_index=idx,
                     source="placeholder",
                 )
                 assets.append(asset.model_dump(mode="json"))
@@ -1075,7 +1075,7 @@ class ContentPipeline:
         placements: list[dict[str, Any]] = []
         for index, item in enumerate(placements_raw[:4]):
             if isinstance(item, dict):
-                item.setdefault("asset_index", index)
+                item["asset_index"] = index
                 placements.append(item)
 
         body = payload.get("body", "")

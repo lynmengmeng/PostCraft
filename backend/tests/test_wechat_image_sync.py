@@ -4,6 +4,8 @@ from app.models.schemas import CoverAsset
 from app.services.image_generator import ImageGenerator
 from app.services.wechat_assets import (
     get_cover_asset_by_index,
+    realign_body_image_markers,
+    restore_body_image_placeholders_from_assets,
     sync_body_image_alts_from_assets,
     sync_image_placements,
 )
@@ -37,6 +39,75 @@ def test_finalize_keeps_image_placeholders_in_body() -> None:
     result = finalize_wechat_content({"body": body, "summary": ""}, assets)
     assert "__IMAGE_0__" in result["body"]
     assert "slot-ph-wechat" not in result["body"]
+
+
+def test_restore_body_image_placeholders_from_shared_url() -> None:
+    shared = "/api/images/slot-placeholder-inline.svg"
+    body = f"![图A]({shared})\n\n![图B]({shared})"
+    assets = [
+        CoverAsset(asset_index=0, image_url=shared, source="placeholder", caption="图A").model_dump(
+            mode="json"
+        ),
+        CoverAsset(asset_index=1, image_url=shared, source="placeholder", caption="图B").model_dump(
+            mode="json"
+        ),
+    ]
+    placements = [
+        {"after_paragraph": 1, "asset_index": 0, "caption": "图A", "prompt": "a"},
+        {"after_paragraph": 3, "asset_index": 1, "caption": "图B", "prompt": "b"},
+    ]
+    restored = restore_body_image_placeholders_from_assets(body, assets, placements)
+    assert "![图A](__IMAGE_0__)" in restored
+    assert "![图B](__IMAGE_1__)" in restored
+
+
+def test_realign_duplicate_image_markers() -> None:
+    body = "![图A](__IMAGE_0__)\n\n![图B](__IMAGE_0__)"
+    assets = [
+        CoverAsset(asset_index=0, platform="wechat", caption="图A", after_paragraph=1).model_dump(
+            mode="json"
+        ),
+        CoverAsset(asset_index=1, platform="wechat", caption="图B", after_paragraph=3).model_dump(
+            mode="json"
+        ),
+    ]
+    placements = [
+        {"after_paragraph": 1, "asset_index": 0, "caption": "图A", "prompt": "a"},
+        {"after_paragraph": 3, "asset_index": 1, "caption": "图B", "prompt": "b"},
+    ]
+    realigned = realign_body_image_markers(body, assets, placements)
+    assert "![图A](__IMAGE_0__)" in realigned
+    assert "![图B](__IMAGE_1__)" in realigned
+
+
+def test_finalize_realigns_duplicate_markers_after_first_generation() -> None:
+    shared = "/api/images/slot-placeholder-inline.svg"
+    body = f"![图A]({shared})\n\n![图B]({shared})"
+    assets = [
+        CoverAsset(
+            asset_index=0,
+            platform="wechat",
+            image_url="/api/images/first.png",
+            source="generated",
+            caption="图A",
+            after_paragraph=1,
+        ).model_dump(mode="json"),
+        CoverAsset(
+            asset_index=1,
+            platform="wechat",
+            image_url=shared,
+            source="placeholder",
+            caption="图B",
+            after_paragraph=3,
+        ).model_dump(mode="json"),
+    ]
+    placements = [
+        {"after_paragraph": 1, "asset_index": 0, "caption": "图A", "prompt": "a"},
+        {"after_paragraph": 3, "asset_index": 1, "caption": "图B", "prompt": "b"},
+    ]
+    result = finalize_wechat_content({"body": body, "summary": "", "image_placements": placements}, assets)
+    assert "![图A](__IMAGE_0__)" in result["body"]
+    assert "![图B](__IMAGE_1__)" in result["body"]
 
 
 def test_restore_body_image_placeholders_from_embedded_url() -> None:

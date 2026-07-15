@@ -58,6 +58,139 @@ def extract_body_image_refs(body: str) -> list[dict[str, Any]]:
     return refs
 
 
+def _wechat_asset_index(asset: CoverAsset | dict[str, Any], fallback: int) -> int:
+    if isinstance(asset, dict):
+        return int(asset.get("asset_index", fallback))
+    return int(asset.asset_index if asset.asset_index >= 0 else fallback)
+
+
+def _is_wechat_asset(asset: CoverAsset | dict[str, Any]) -> bool:
+    platform = asset.get("platform", "wechat") if isinstance(asset, dict) else asset.platform
+    return platform in ("wechat", "all", None)
+
+
+def _after_paragraph(asset: CoverAsset | dict[str, Any]) -> int | None:
+    if isinstance(asset, dict):
+        value = asset.get("after_paragraph")
+    else:
+        value = asset.after_paragraph
+    return int(value) if value is not None else None
+
+
+def realign_body_image_markers(
+    body: str,
+    cover_assets: list[CoverAsset | dict[str, Any]],
+    image_placements: list[dict[str, Any] | WechatImagePlacement] | None = None,
+) -> str:
+    """按正文出现顺序，将配图占位符对齐到唯一的 asset_index（修复重复的 __IMAGE_0__）。"""
+    refs = extract_body_image_refs(body)
+    if len(refs) <= 1:
+        return body
+
+    targets: list[int] = []
+    if image_placements:
+        for index, item in enumerate(image_placements):
+            if isinstance(item, dict):
+                targets.append(int(item.get("asset_index", index)))
+            else:
+                targets.append(int(item.asset_index))
+    if not targets:
+        inline_indices = sorted(
+            {
+                _wechat_asset_index(asset, index)
+                for index, asset in enumerate(cover_assets)
+                if _is_wechat_asset(asset) and (_after_paragraph(asset) or 0) >= 0
+            }
+        )
+        targets = inline_indices
+
+    if len(targets) < len(refs):
+        used = set(targets)
+        for index, asset in enumerate(cover_assets):
+            if not _is_wechat_asset(asset):
+                continue
+            candidate = _wechat_asset_index(asset, index)
+            if candidate not in used:
+                targets.append(candidate)
+                used.add(candidate)
+            if len(targets) >= len(refs):
+                break
+
+    cursor = [0]
+
+    def replace(match: re.Match[str]) -> str:
+        alt = match.group(1)
+        src = match.group(2).strip()
+        if not PLACEHOLDER_SRC_RE.match(src):
+            return match.group(0)
+        if cursor[0] >= len(targets):
+            return match.group(0)
+        asset_index = targets[cursor[0]]
+        cursor[0] += 1
+        return f"![{alt}](__IMAGE_{asset_index}__)"
+
+    return IMAGE_MD_RE.sub(replace, body)
+
+
+def restore_body_image_placeholders_from_assets(
+    body: str,
+    cover_assets: list[CoverAsset | dict[str, Any]],
+    image_placements: list[dict[str, Any] | WechatImagePlacement] | None = None,
+) -> str:
+    """将正文中固化的配图 URL 还原为 __IMAGE_N__，按正文顺序与 placements 对齐。"""
+    from collections import defaultdict
+
+    targets: list[int] = []
+    if image_placements:
+        for index, item in enumerate(image_placements):
+            if isinstance(item, dict):
+                targets.append(int(item.get("asset_index", index)))
+            else:
+                targets.append(int(item.asset_index))
+    if not targets:
+        targets = sorted(
+            {
+                _wechat_asset_index(asset, index)
+                for index, asset in enumerate(cover_assets)
+                if _is_wechat_asset(asset)
+            }
+        )
+
+    url_queues: dict[str, list[int]] = defaultdict(list)
+    for index, asset in enumerate(cover_assets):
+        asset_index = _wechat_asset_index(asset, index)
+        url = asset.get("image_url", "") if isinstance(asset, dict) else asset.image_url
+        if url and not PLACEHOLDER_SRC_RE.match(url):
+            url_queues[url].append(asset_index)
+
+    cursor = [0]
+
+    def replace(match: re.Match[str]) -> str:
+        alt = match.group(1)
+        url = match.group(2).strip()
+        if PLACEHOLDER_SRC_RE.match(url):
+            return match.group(0)
+
+        asset_index: int | None = None
+        if cursor[0] < len(targets):
+            asset_index = targets[cursor[0]]
+            queue = url_queues.get(url)
+            if queue and asset_index in queue:
+                queue.remove(asset_index)
+        else:
+            queue = url_queues.get(url)
+            if queue:
+                asset_index = queue.pop(0)
+
+        if asset_index is None:
+            return match.group(0)
+
+        cursor[0] += 1
+        return f"![{alt}](__IMAGE_{asset_index}__)"
+
+    return IMAGE_MD_RE.sub(replace, body)
+
+
 def get_cover_asset_by_index(
     cover_assets: list[CoverAsset | dict[str, Any]],
     asset_index: int,

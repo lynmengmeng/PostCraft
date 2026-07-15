@@ -4,6 +4,10 @@ import re
 from typing import Any
 
 from app.models.schemas import CoverAsset, WechatContent
+from app.services.wechat_assets import (
+    realign_body_image_markers,
+    restore_body_image_placeholders_from_assets,
+)
 
 DEFAULT_THEME: dict[str, str] = {
     "layout_preset": "classic",
@@ -285,21 +289,9 @@ def _get_cover_asset_by_index(
 def restore_body_image_placeholders(
     body: str,
     cover_assets: list[CoverAsset | dict[str, Any]],
+    image_placements: list[dict[str, Any]] | None = None,
 ) -> str:
-    """将正文中已固化的配图 URL 还原为 __IMAGE_N__ 占位符，便于编辑与预览同步。"""
-    result = body
-    for index, asset in enumerate(cover_assets):
-        asset_index = _asset_index_value(asset, index)
-        url = asset.get("image_url", "") if isinstance(asset, dict) else asset.image_url
-        if not url:
-            continue
-        marker = f"__IMAGE_{asset_index}__"
-        result = re.sub(
-            rf"!\[([^\]]*)\]\({re.escape(url)}\)",
-            rf"![\1]({marker})",
-            result,
-        )
-    return result
+    return restore_body_image_placeholders_from_assets(body, cover_assets, image_placements)
 
 
 def replace_image_placeholders(body: str, cover_assets: list[CoverAsset | dict[str, Any]]) -> str:
@@ -506,7 +498,12 @@ def finalize_wechat_content(
     cover_assets: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     assets = cover_assets or []
-    body = restore_body_image_placeholders(wechat_data.get("body", ""), assets)
+    body = restore_body_image_placeholders_from_assets(
+        wechat_data.get("body", ""),
+        assets,
+        wechat_data.get("image_placements"),
+    )
+    body = realign_body_image_markers(body, assets, wechat_data.get("image_placements"))
     wechat_data = {**wechat_data, "body": body}
     wechat_data.pop("formatted_html", None)
     wechat_data["formatted_html"] = build_formatted_html(wechat_data, assets, force_rerender=True)

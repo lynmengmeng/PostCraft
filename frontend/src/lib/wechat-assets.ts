@@ -6,9 +6,7 @@ export function getCoverAssetByIndex(
   assets: CoverAsset[],
   assetIndex: number,
 ): CoverAsset | undefined {
-  const byIndex = assets.find((a) => a.asset_index === assetIndex);
-  if (byIndex) return byIndex;
-  return assets[assetIndex];
+  return assets.find((a) => a.asset_index === assetIndex);
 }
 
 export function isPlaceholderAsset(asset: CoverAsset): boolean {

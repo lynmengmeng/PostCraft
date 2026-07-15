@@ -736,8 +736,8 @@ async def generate_asset_image(
     )
     existing = assets[slot]
     after_paragraph = existing.after_paragraph
-    is_cover = after_paragraph is None or after_paragraph < 0 or slot == 0
     is_xhs = existing.platform == "xiaohongshu"
+    is_cover = not is_xhs and (after_paragraph is None or after_paragraph < 0)
     aspect = "xhs" if is_xhs or not is_cover else "wechat"
     if is_xhs:
         from app.services.xiaohongshu_assets import resolve_xhs_generation_prompt, sync_xhs_carousel_plan

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.data.health_wellness_seed import (
+from app.presets.health_wellness_seed import (
     HEALTH_WELLNESS_CATEGORIES,
     HEALTH_WELLNESS_STYLE,
     HEALTH_WELLNESS_TOPICS,
@@ -35,7 +35,7 @@ def test_health_wellness_seed_structure() -> None:
 
 
 def test_seed_health_wellness_idempotent(client: TestClient) -> None:
-    from app.data.health_wellness_seed import apply_health_wellness_seed
+    from app.presets.health_wellness_seed import apply_health_wellness_seed
     from app.db.database import SessionLocal
 
     db = SessionLocal()

@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.data.health_wellness_seed import apply_health_wellness_seed  # noqa: E402
+from app.presets.health_wellness_seed import apply_health_wellness_seed  # noqa: E402
 from app.db.database import SessionLocal, init_db  # noqa: E402
 from app.services.auth import get_user_by_username  # noqa: E402
 

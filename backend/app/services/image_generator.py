@@ -8,6 +8,7 @@ from openai import APIStatusError, AsyncOpenAI, AuthenticationError
 
 from app.config import Settings
 from app.services.openai_transport import build_async_openai_image_client
+from app.services.media_storage import persist_local_image
 from app.utils.image_bytes import detect_image_content_type
 
 logger = logging.getLogger(__name__)
@@ -100,9 +101,13 @@ class ImageGenerator:
         if not image_b64:
             raise RuntimeError("OpenAI image response missing b64_json and url")
         filename = f"{uuid4().hex}.png"
-        path = self.output_dir / filename
-        path.write_bytes(base64.b64decode(image_b64))
-        return f"/api/images/{filename}"
+        content = base64.b64decode(image_b64)
+        return persist_local_image(
+            self.settings,
+            filename=filename,
+            content=content,
+            content_type="image/png",
+        )
 
     def slot_placeholder(self, aspect: CoverAspect = "wechat", *, caption: str = "待配图") -> str:
         """Default slot image shown before user uploads or AI-generates."""
@@ -165,6 +170,9 @@ class ImageGenerator:
             "image/gif": ".gif",
         }
         filename = f"{uuid4().hex}{ext_map[detected]}"
-        path = self.output_dir / filename
-        path.write_bytes(content)
-        return f"/api/images/{filename}"
+        return persist_local_image(
+            self.settings,
+            filename=filename,
+            content=content,
+            content_type=detected,
+        )

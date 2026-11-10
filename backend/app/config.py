@@ -33,10 +33,18 @@ class Settings(BaseSettings):
 
     database_url: str = ""
 
+    # Supabase：PostgreSQL 用 DATABASE_URL；图片可选 Storage
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_storage_bucket: str = "postcraft-images"
+    image_storage: str = "local"  # local | supabase
+
     def model_post_init(self, __context: object) -> None:
         if not self.database_url:
             db_path = (ROOT_DIR / "data" / "postcraft.db").resolve().as_posix()
             object.__setattr__(self, "database_url", f"sqlite:///{db_path}")
+        storage = (self.image_storage or "local").strip().lower()
+        object.__setattr__(self, "image_storage", storage)
 
     llm_provider: str = "deepseek"
     deepseek_api_key: str = ""
@@ -99,6 +107,14 @@ class Settings(BaseSettings):
     docs_skills_dir: Path = ROOT_DIR / "docs" / "oh-my-writing-skill"
     root_dir: Path = ROOT_DIR
     images_dir: Path = ROOT_DIR / "data" / "images"
+
+    @property
+    def use_supabase_storage(self) -> bool:
+        return (
+            self.image_storage == "supabase"
+            and bool(self.supabase_url.strip())
+            and bool(self.supabase_service_role_key.strip())
+        )
 
     @property
     def cors_origin_list(self) -> list[str]:

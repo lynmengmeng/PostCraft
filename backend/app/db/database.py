@@ -10,6 +10,7 @@ from sqlalchemy import DateTime, String, Text, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from app.config import get_settings
+from app.db.engine_factory import build_engine, is_sqlite
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +66,7 @@ class SettingsRow(Base):
 
 
 settings = get_settings()
-Path(settings.database_url.replace("sqlite:///", "")).parent.mkdir(parents=True, exist_ok=True)
-engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
+engine = build_engine(settings.database_url)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 _USER_ID_TABLES = ("content_projects", "inspirations", "topics")
@@ -80,7 +80,12 @@ def _ensure_user_id_columns() -> None:
                 continue
             columns = {col["name"] for col in inspector.get_columns(table)}
             if "user_id" not in columns:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id VARCHAR(36)"))
+                if is_sqlite(str(engine.url)):
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id VARCHAR(36)"))
+                else:
+                    conn.execute(
+                        text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS user_id VARCHAR(36)")
+                    )
                 logger.info("Added user_id column to %s", table)
 
 
